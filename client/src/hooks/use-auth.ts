@@ -84,11 +84,11 @@ export function useAuth() {
       return response.json();
     },
     onSuccess: (data) => {
-      if (data.requiresVerification) {
-        setLocation("/registration-success");
-      } else if (data.user) {
+      if (data.user) {
         queryClient.setQueryData(["/api/users/me"], data.user);
         setLocation("/");
+      } else if (data.requiresVerification) {
+        setLocation("/registration-success");
       }
     }
   });
