@@ -2,50 +2,76 @@
 
 > Digital receipt management with OCR, smart deadlines, and verifiable claims
 
-SlipSafe is a comprehensive receipt management system that transforms physical receipts into digital records using OCR technology. It automatically computes return and warranty deadlines, generates verifiable claims with QR codes, and provides offline-first Progressive Web App capabilities.
+SlipSafe is a comprehensive receipt management system that transforms physical receipts into digital records using OCR technology. It automatically computes return and warranty deadlines, generates verifiable claims with QR codes, and provides offline-first Progressive Web App capabilities. The system supports both personal and business contexts with comprehensive tax reporting and expense analytics.
 
 ![SlipSafe Logo](client/public/logo.png)
 
-## 🌟 Key Features
+## Key Features
 
-### 📸 Intelligent OCR Processing
+### Intelligent OCR Processing
 - **Automated Data Extraction**: Upload receipt images (JPEG, PNG, PDF) and let Tesseract.js extract merchant name, date, and total amount
 - **Confidence Scoring**: Visual indicators (high/medium/low) show OCR accuracy
 - **Manual Correction**: Edit any extracted field before saving to ensure accuracy
 - **Smart Parsing**: Advanced regex patterns detect multiple date formats, currency symbols, and merchant names
 
-### 📋 Custom Merchant Rules
+### Custom Merchant Rules
 - **Flexible Policies**: Set custom return periods (days) and warranty durations (months) per merchant
 - **Automatic Application**: System matches merchant names and applies appropriate deadlines
 - **Default Fallbacks**: 30-day return, 12-month warranty for merchants without custom rules
 - **Easy Management**: Full CRUD interface in Settings for creating, editing, and deleting rules
 
-### 🎫 Verifiable Claims
+### Verifiable Claims
 - **QR Code Generation**: Each claim includes a scannable QR code linking to verification page
 - **6-Digit PIN**: Additional security layer for claim verification
 - **JWT Tokens**: Cryptographically signed claims with 90-day expiration
 - **Merchant Verification**: Dedicated verification page for retailers to validate claims
 
-### 📄 PDF Export
+### PDF Export
 - **Professional Documents**: Generate PDF receipts with embedded QR codes
 - **Complete Information**: Includes merchant, date, amount, return deadline, warranty expiration
 - **Download & Share**: Save locally or share via messaging apps
 
-### 📱 Progressive Web App (PWA)
+### Business Context Switching
+- **Dual Mode**: Switch between personal and business contexts for separate receipt tracking
+- **Business Profile**: Manage business name, tax ID, VAT number, registration number, address, and contact details
+- **Context Persistence**: Active context is saved and persists across sessions
+- **Separate Analytics**: Each context has its own receipts, reports, and expense tracking
+
+### Tax & Reports
+- **Summary Dashboard**: View total receipts, spending, tax deductible amounts, and VAT claimable
+- **Category Breakdown**: Visual pie chart and detailed table of expenses by category
+- **Vendor Analysis**: Track spending patterns across different merchants
+- **Monthly Trends**: Bar charts showing spending patterns over time with tax breakdown
+- **Date Filtering**: Filter reports by custom date ranges
+- **CSV Export**: Download comprehensive reports for accounting and tax purposes
+
+### Admin Dashboard
+- **User Activity Monitoring**: Track login attempts, receipt uploads, and system usage
+- **System Statistics**: View total users, receipts, claims, and activity metrics
+- **Security Audit**: Monitor failed login attempts and account recovery requests
+- **Admin Authentication**: Secure access with environment-based admin credentials
+
+### Email System
+- **Account Recovery**: Forgot password and username recovery via email
+- **Professional Branding**: HTML email templates with SlipSafe branding
+- **Resend Integration**: Reliable transactional email delivery
+- **Security Measures**: Rate limiting and token expiration for reset requests
+
+### Progressive Web App (PWA)
 - **Offline Support**: Cache-first strategy for static assets, network-first for API calls
 - **Background Sync**: Automatic upload retry when connection is restored
 - **Install Prompt**: Add to home screen for native app experience
 - **Offline Indicator**: Real-time connection status with automatic hide/show
 - **IndexedDB Storage**: Persistent local storage with blob support for receipt images (~500KB per receipt)
 
-### 🔐 Security & Authentication
+### Security & Authentication
 - **Session-Based Auth**: Secure passport-local strategy with bcrypt password hashing
 - **Rate Limiting**: Protection against brute force attacks (3-5 attempts per 15 minutes)
 - **Account Recovery**: Forgot password/username with secure token-based reset
-- **Demo Mailbox**: Development-only interface for testing email flows
+- **Phone/Email Registration**: Mandatory phone number, optional email for account recovery
 - **Defense in Depth**: Server-side userId validation prevents privilege escalation
 
-## 🛠️ Technology Stack
+## Technology Stack
 
 ### Frontend
 - **React 18** - Modern UI library with hooks
@@ -55,6 +81,7 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
 - **TanStack Query v5** - Powerful server state management
 - **Shadcn/ui** - Beautiful accessible components (Radix UI primitives)
 - **Tailwind CSS** - Utility-first styling with custom design system
+- **Recharts** - Data visualization for reports (pie charts, bar charts)
 - **Lucide React** - Clean, consistent icons
 
 ### Backend
@@ -67,6 +94,7 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
 - **JWT** - Token-based claim verification
 - **Passport.js** - Authentication middleware
 - **Bcrypt** - Secure password hashing
+- **Resend** - Transactional email delivery
 
 ### Database & ORM
 - **PostgreSQL** - Robust relational database via Neon serverless
@@ -78,7 +106,7 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
 - **IndexedDB** - Client-side blob storage and data persistence
 - **Web App Manifest** - Install prompt and app metadata
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 - Node.js 18+ and npm
@@ -108,8 +136,15 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
    SESSION_SECRET=your-secure-random-string-here
    JWT_SECRET=another-secure-random-string-here
    
+   # Email (Resend)
+   RESEND_API_KEY=re_your_api_key_here
+   
+   # Admin Dashboard (optional)
+   ADMIN_USERNAME=admin
+   ADMIN_PASSWORD=secure_admin_password
+   
    # Server
-   PORT=3001
+   PORT=5000
    NODE_ENV=development
    ```
 
@@ -127,13 +162,14 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
    
    Navigate to `http://localhost:5000`
 
-## 📖 Usage Guide
+## Usage Guide
 
 ### 1. User Registration
 1. Navigate to the home page
 2. Click "Register" if you don't have an account
-3. Fill in username, email, and password
-4. Click "Register" to create your account
+3. Fill in username, phone number (required), email (optional), and password
+4. Optionally check "Register as Business Account" for business features
+5. Click "Register" to create your account
 
 ### 2. Upload a Receipt
 1. Click "Upload" in the sidebar
@@ -148,7 +184,22 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
 4. View computed deadlines based on merchant rules
 5. Click "Save Receipt" to store the record
 
-### 4. Manage Merchant Rules
+### 4. Switch Context (Business Users)
+1. Business users see a toggle in the sidebar
+2. Switch between "Personal" and "Business" modes
+3. Each context has separate receipts and reports
+4. Context is saved and persists across sessions
+
+### 5. View Tax & Reports
+1. Click "Reports" in the sidebar
+2. View summary cards (Total Receipts, Spent, Tax, VAT)
+3. Explore "By Category" tab with pie chart visualization
+4. Check "By Vendor" tab for merchant-level breakdown
+5. Review "By Month" tab with bar chart trends
+6. Use date filters for custom date ranges
+7. Click "Export CSV" to download report data
+
+### 6. Manage Merchant Rules
 1. Navigate to "Settings" in the sidebar
 2. Scroll to "Merchant Rules" card
 3. Click "Add Rule" to create a new policy
@@ -156,32 +207,32 @@ SlipSafe is a comprehensive receipt management system that transforms physical r
 5. Set return period (days) and warranty duration (months)
 6. Click "Save" to apply the rule
 
-### 5. View Your Receipts
+### 7. View Your Receipts
 1. Click "Receipts" in the sidebar
 2. Search by merchant, amount, or date
 3. Filter by category using the dropdown
 4. Click a receipt to view full details
 
-### 6. Generate a Claim
+### 8. Generate a Claim
 1. Open a receipt from your list
 2. Click "Generate Claim"
 3. View the QR code and 6-digit PIN
 4. Download the QR code image
 5. Share via WhatsApp or other messaging apps
 
-### 7. Download PDF
+### 9. Download PDF
 1. Open a receipt from your list
 2. Click "Download PDF"
 3. PDF includes merchant info, amounts, dates, deadlines, and QR code
 4. Save or share the PDF document
 
-### 8. Install as PWA (Progressive Web App)
+### 10. Install as PWA
 1. Look for the install prompt banner at the bottom
 2. Click "Install SlipSafe"
 3. App will be added to your home screen
 4. Launch like a native app with offline support
 
-## 🔌 API Documentation
+## API Documentation
 
 ### Authentication Endpoints
 
@@ -192,14 +243,17 @@ Content-Type: application/json
 
 {
   "username": "johndoe",
+  "phone": "+27123456789",
   "email": "john@example.com",
-  "password": "SecurePass123!"
+  "password": "SecurePass123!",
+  "isBusiness": false
 }
 
 Response: 200 OK
 {
   "id": "uuid-here",
   "username": "johndoe",
+  "phone": "+27123456789",
   "email": "john@example.com"
 }
 ```
@@ -228,6 +282,52 @@ POST /api/logout
 
 Response: 200 OK
 { "ok": true }
+```
+
+### Reports Endpoints
+
+#### Get Reports Summary
+```http
+GET /api/reports/summary?startDate=2025-01-01&endDate=2025-12-31
+Authorization: Session cookie required
+
+Response: 200 OK
+{
+  "summary": {
+    "totalReceipts": 42,
+    "totalSpent": "15250.00",
+    "totalTax": "2287.50",
+    "totalVat": "1982.61"
+  },
+  "byCategory": [
+    {
+      "name": "Shopping",
+      "count": 15,
+      "total": "5200.00",
+      "tax": "780.00",
+      "vat": "676.52"
+    }
+  ],
+  "byMerchant": [
+    {
+      "name": "WALMART",
+      "count": 8,
+      "total": "2400.00",
+      "tax": "360.00",
+      "vat": "312.17"
+    }
+  ],
+  "byMonth": [
+    {
+      "month": "2025-01",
+      "count": 12,
+      "total": "3800.00",
+      "tax": "570.00",
+      "vat": "494.35"
+    }
+  ],
+  "context": "personal"
+}
 ```
 
 ### Receipt Endpoints
@@ -316,6 +416,30 @@ Content-Disposition: attachment; filename="receipt-WALMART-2025-01-15.pdf"
 [PDF binary data]
 ```
 
+### Business Profile Endpoints
+
+#### Update Business Profile
+```http
+PUT /api/users/business-profile
+Content-Type: application/json
+Authorization: Session cookie required
+
+{
+  "businessName": "My Company Ltd",
+  "taxId": "TAX123456",
+  "vatNumber": "VAT789012",
+  "registrationNumber": "REG456789",
+  "businessAddress": "123 Business St",
+  "businessPhone": "+27987654321",
+  "businessEmail": "accounts@mycompany.com"
+}
+
+Response: 200 OK
+{
+  "user": { ... updated user object ... }
+}
+```
+
 ### Merchant Rules Endpoints
 
 #### Create Merchant Rule
@@ -339,55 +463,6 @@ Response: 200 OK
     "warrantyMonths": 24
   }
 }
-```
-
-#### Get All Rules
-```http
-GET /api/merchant-rules
-Authorization: Session cookie required
-
-Response: 200 OK
-{
-  "rules": [
-    {
-      "id": "uuid-here",
-      "merchantName": "WALMART",
-      "returnPolicyDays": 90,
-      "warrantyMonths": 24
-    }
-  ]
-}
-```
-
-#### Update Merchant Rule
-```http
-PATCH /api/merchant-rules/:id
-Content-Type: application/json
-Authorization: Session cookie required
-
-{
-  "returnPolicyDays": 120,
-  "warrantyMonths": 36
-}
-
-Response: 200 OK
-{
-  "rule": {
-    "id": "uuid-here",
-    "merchantName": "WALMART",
-    "returnPolicyDays": 120,
-    "warrantyMonths": 36
-  }
-}
-```
-
-#### Delete Merchant Rule
-```http
-DELETE /api/merchant-rules/:id
-Authorization: Session cookie required
-
-Response: 200 OK
-{ "ok": true }
 ```
 
 ### Claims Endpoints
@@ -416,54 +491,27 @@ Response: 200 OK
 }
 ```
 
-#### Get User Claims
-```http
-GET /api/claims
-Authorization: Session cookie required
-
-Response: 200 OK
-{
-  "claims": [
-    {
-      "id": "uuid-here",
-      "purchase": {
-        "merchant": "WALMART",
-        "date": "2025-01-15",
-        "total": "52.50"
-      },
-      "pin": "123456",
-      "qrCodeUrl": "data:image/png;base64,...",
-      "verificationUrl": "https://app.com/claim/...",
-      "expiresAt": "2025-04-15T12:00:00Z"
-    }
-  ]
-}
-```
-
-#### Verify Claim (Public)
-```http
-GET /claim/:token?pin=123456
-
-Response: 200 OK (HTML page)
-Displays verification result with purchase details
-```
-
-## 💾 Database Schema
+## Database Schema
 
 ### Users Table
 ```sql
 CREATE TABLE users (
   id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
   username VARCHAR NOT NULL UNIQUE,
-  email VARCHAR NOT NULL UNIQUE,
+  email VARCHAR UNIQUE,
+  phone VARCHAR NOT NULL,
   password VARCHAR NOT NULL,
   full_name VARCHAR,
-  phone VARCHAR,
   id_number VARCHAR,
   home_address TEXT,
   is_business BOOLEAN DEFAULT false,
   business_name VARCHAR,
   tax_id VARCHAR,
+  vat_number VARCHAR,
+  registration_number VARCHAR,
+  business_address TEXT,
+  business_phone VARCHAR,
+  business_email VARCHAR,
   active_context VARCHAR DEFAULT 'personal',
   created_at TIMESTAMP DEFAULT NOW()
 );
@@ -478,40 +526,32 @@ CREATE TABLE purchases (
   merchant VARCHAR NOT NULL,
   date DATE NOT NULL,
   total VARCHAR NOT NULL,
+  tax_amount VARCHAR,
+  vat_amount VARCHAR,
   return_by DATE,
   warranty_ends DATE,
   category VARCHAR DEFAULT 'Other',
+  context VARCHAR DEFAULT 'personal',
   image_path VARCHAR,
   ocr_confidence VARCHAR,
   created_at TIMESTAMP DEFAULT NOW()
 );
 ```
 
-### Merchant Rules Table
+### Activity Log Table
 ```sql
-CREATE TABLE merchant_rules (
+CREATE TABLE activity_log (
   id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-  user_id VARCHAR NOT NULL REFERENCES users(id),
-  merchant_name VARCHAR NOT NULL,
-  return_policy_days INTEGER NOT NULL,
-  warranty_months INTEGER NOT NULL,
+  user_id VARCHAR REFERENCES users(id),
+  action VARCHAR NOT NULL,
+  metadata TEXT,
+  ip_address VARCHAR,
+  user_agent TEXT,
   created_at TIMESTAMP DEFAULT NOW()
 );
 ```
 
-### Claims Table
-```sql
-CREATE TABLE claims (
-  id VARCHAR PRIMARY KEY DEFAULT gen_random_uuid(),
-  purchase_id VARCHAR NOT NULL REFERENCES purchases(id),
-  token TEXT NOT NULL UNIQUE,
-  pin VARCHAR(6) NOT NULL,
-  expires_at TIMESTAMP NOT NULL,
-  created_at TIMESTAMP DEFAULT NOW()
-);
-```
-
-## 🔧 Development
+## Development
 
 ### Project Structure
 ```
@@ -520,13 +560,24 @@ slipsafe/
 │   ├── src/
 │   │   ├── components/    # Reusable UI components
 │   │   ├── pages/         # Route pages
+│   │   │   ├── home.tsx       # Upload page
+│   │   │   ├── receipts.tsx   # Receipt list
+│   │   │   ├── claims.tsx     # Claims management
+│   │   │   ├── reports.tsx    # Tax & Reports
+│   │   │   ├── settings.tsx   # Settings page
+│   │   │   ├── profile.tsx    # User profile
+│   │   │   └── admin.tsx      # Admin dashboard
 │   │   ├── lib/           # Utilities & query client
 │   │   └── hooks/         # Custom React hooks
 │   └── public/            # Static assets & PWA files
 ├── server/                # Express backend
 │   ├── routes.ts          # API route handlers
 │   ├── storage.ts         # Database layer
+│   ├── auth.ts            # Authentication logic
 │   ├── lib/               # Server utilities
+│   │   ├── ocr.ts         # OCR processing
+│   │   ├── pdf.ts         # PDF generation
+│   │   └── email.ts       # Email sending
 │   └── index.ts           # Server entry point
 ├── shared/                # Shared types & schemas
 │   └── schema.ts          # Drizzle schema & Zod validation
@@ -556,29 +607,16 @@ npm start                # Start production server
 DATABASE_URL=postgresql://...     # PostgreSQL connection string
 SESSION_SECRET=random-string      # Express session secret
 JWT_SECRET=random-string          # JWT signing secret
+RESEND_API_KEY=re_...             # Resend API key for emails
 
 # Optional
-PORT=3001                         # Server port (default: 3001)
+PORT=5000                         # Server port (default: 5000)
 NODE_ENV=development              # Environment (development/production)
+ADMIN_USERNAME=admin              # Admin dashboard username
+ADMIN_PASSWORD=secure_password    # Admin dashboard password
 ```
 
-### Testing
-
-The project uses Playwright for end-to-end testing:
-
-```bash
-# Run tests via testing subagent (automated)
-# Tests cover:
-# - User registration & authentication
-# - Receipt upload & OCR processing
-# - Merchant rules CRUD operations
-# - Receipt listing with filters
-# - PDF generation & download
-# - Claim generation & verification
-# - PWA features (offline, background sync)
-```
-
-## 📱 PWA Features
+## PWA Features
 
 ### Offline Support
 - **Cache Strategy**: Cache-first for static assets (HTML, CSS, JS, images)
@@ -603,13 +641,14 @@ The project uses Playwright for end-to-end testing:
 - **Theme**: Indigo primary color (#4f46e5)
 - **Icons**: Multiple sizes (192x192, 512x512) for all devices
 
-## 🏗️ Architecture Overview
+## Architecture Overview
 
 ### Frontend Architecture
 - **Component Library**: Shadcn/ui with Radix UI primitives for accessibility
 - **State Management**: TanStack Query handles server state; React hooks for local state
 - **Routing**: Wouter for lightweight client-side routing
 - **Styling**: Tailwind CSS with custom design system (Material Design-inspired)
+- **Charts**: Recharts for data visualization in Reports page
 - **Error Handling**: Custom ApiError class extracts user-friendly messages
 
 ### Backend Architecture
@@ -623,6 +662,8 @@ The project uses Playwright for end-to-end testing:
   6. Deadline computation applies merchant rules
   7. SHA256 hash for deduplication
 - **Claim System**: JWT tokens (90-day expiration) + 6-digit PINs + QR codes
+- **Reports System**: Aggregates data by category, vendor, and month with tax calculations
+- **Email System**: Resend integration for account recovery emails
 - **Security**: Session-based auth, rate limiting, bcrypt hashing, userId validation
 
 ### Data Flow
@@ -631,31 +672,36 @@ The project uses Playwright for end-to-end testing:
 3. Server extracts data and returns preview
 4. User reviews/edits in UI
 5. Frontend sends to `/api/receipts/confirm` (save)
-6. Server applies merchant rules, computes deadlines, stores purchase
+6. Server applies merchant rules, computes deadlines, stores purchase with context
 7. Frontend invalidates cache, refetches receipts list
 8. Receipt appears in list with correct deadlines
 
-## 🐛 Recent Bug Fixes
+## Recent Updates
 
-### November 18, 2025
+### December 2025
 
-**1. Receipt Save Validation Fix**
-- **Issue**: POST /api/receipts/confirm failed with "userId required"
-- **Fix**: Added userId to purchaseData before schema validation
-- **Impact**: Receipt saving works correctly
+**1. Tax & Reports Feature**
+- Added comprehensive reporting system with summary dashboard
+- Visual charts using Recharts (pie charts for categories, bar charts for trends)
+- CSV export functionality for accounting
+- Date range filtering
 
-**2. Query Parameter Serialization Fix**
-- **Issue**: Receipts page showed "No receipts found" despite server returning data
-- **Fix**: Rewrote getQueryFn to properly handle query key objects
-- **Features**: Merges multiple objects, handles arrays/booleans, JSON-stringifies nested objects
-- **Impact**: Receipts page displays correctly, filters work
+**2. Business Context Switching**
+- Dual mode support for personal and business receipts
+- Business profile management with tax and registration details
+- Context-aware receipt filtering and reporting
 
-**3. Storage Layer Security Enhancement**
-- **Issue**: Potential privilege escalation via userId mismatch
-- **Fix**: Added defensive validation in createPurchase method
-- **Impact**: Prevents creating purchases with mismatched user IDs
+**3. Email System Integration**
+- Resend API integration for transactional emails
+- Professional HTML email templates
+- Account recovery (forgot password/username)
 
-## 🤝 Contributing
+**4. Admin Dashboard**
+- User activity monitoring
+- System statistics and metrics
+- Security audit logging
+
+## Contributing
 
 1. Fork the repository
 2. Create a feature branch (`git checkout -b feature/amazing-feature`)
@@ -663,23 +709,25 @@ The project uses Playwright for end-to-end testing:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - **Tesseract.js** - OCR engine
 - **Shadcn/ui** - Beautiful component library
 - **TanStack Query** - Powerful data synchronization
 - **Radix UI** - Accessible component primitives
+- **Recharts** - Data visualization library
+- **Resend** - Transactional email service
 - **Neon** - Serverless PostgreSQL
 - **Replit** - Development platform
 
-## 📧 Support
+## Support
 
 For issues or questions, please open an issue on GitHub.
 
 ---
 
-Built with ❤️ using React, Express.js, and TypeScript
+Built with React, Express.js, and TypeScript
