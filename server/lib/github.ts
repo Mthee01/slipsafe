@@ -79,3 +79,68 @@ export async function getRepo(owner: string, repo: string) {
     throw error;
   }
 }
+
+export async function commitFilesToGitHub(
+  owner: string,
+  repo: string,
+  branch: string,
+  message: string,
+  files: { path: string; content: string }[]
+) {
+  const octokit = await getUncachableGitHubClient();
+  
+  const { data: refData } = await octokit.git.getRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`
+  });
+  const latestCommitSha = refData.object.sha;
+
+  const { data: commitData } = await octokit.git.getCommit({
+    owner,
+    repo,
+    commit_sha: latestCommitSha
+  });
+  const baseTreeSha = commitData.tree.sha;
+
+  const blobs = await Promise.all(
+    files.map(async (file) => {
+      const { data: blob } = await octokit.git.createBlob({
+        owner,
+        repo,
+        content: Buffer.from(file.content).toString('base64'),
+        encoding: 'base64'
+      });
+      return {
+        path: file.path,
+        mode: '100644' as const,
+        type: 'blob' as const,
+        sha: blob.sha
+      };
+    })
+  );
+
+  const { data: newTree } = await octokit.git.createTree({
+    owner,
+    repo,
+    base_tree: baseTreeSha,
+    tree: blobs
+  });
+
+  const { data: newCommit } = await octokit.git.createCommit({
+    owner,
+    repo,
+    message,
+    tree: newTree.sha,
+    parents: [latestCommitSha]
+  });
+
+  await octokit.git.updateRef({
+    owner,
+    repo,
+    ref: `heads/${branch}`,
+    sha: newCommit.sha
+  });
+
+  return newCommit;
+}

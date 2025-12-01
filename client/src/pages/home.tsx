@@ -10,7 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
-import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff } from "lucide-react";
+import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info } from "lucide-react";
 import { CATEGORIES, type Purchase, type ConfidenceLevel } from "@shared/schema";
 import {
   Dialog,
@@ -55,6 +55,8 @@ export default function Home() {
   })() : null;
   const [showCamera, setShowCamera] = useState(false);
   const [stream, setStream] = useState<MediaStream | null>(null);
+  const [flashEnabled, setFlashEnabled] = useState(false);
+  const [flashSupported, setFlashSupported] = useState(false);
   const { toast } = useToast();
   const isOnline = useOnlineStatus();
   const queryClient = useQueryClient();
@@ -315,14 +317,20 @@ export default function Home() {
       const mediaStream = await navigator.mediaDevices.getUserMedia({
         video: {
           facingMode: "environment",
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 3840, min: 1920 },
+          height: { ideal: 2160, min: 1080 },
+          aspectRatio: { ideal: 4/3 },
         },
         audio: false,
       });
       
       setStream(mediaStream);
       setShowCamera(true);
+      setFlashEnabled(false);
+      
+      const videoTrack = mediaStream.getVideoTracks()[0];
+      const capabilities = videoTrack.getCapabilities?.() as any;
+      setFlashSupported(!!capabilities?.torch);
       
       setTimeout(() => {
         if (videoRef.current) {
@@ -334,6 +342,24 @@ export default function Home() {
       toast({
         title: "Camera access denied",
         description: "Please enable camera permissions to take photos",
+        variant: "destructive",
+      });
+    }
+  };
+
+  const toggleFlash = async () => {
+    if (!stream) return;
+    
+    const videoTrack = stream.getVideoTracks()[0];
+    try {
+      await videoTrack.applyConstraints({
+        advanced: [{ torch: !flashEnabled } as any]
+      });
+      setFlashEnabled(!flashEnabled);
+    } catch (error) {
+      toast({
+        title: "Flash unavailable",
+        description: "Could not toggle flash on this device",
         variant: "destructive",
       });
     }
@@ -680,15 +706,21 @@ export default function Home() {
         )}
 
         <Dialog open={showCamera} onOpenChange={(open) => !open && closeCamera()}>
-          <DialogContent className="sm:max-w-2xl">
-            <DialogHeader>
-              <DialogTitle>Take Receipt Photo</DialogTitle>
-              <DialogDescription>
-                Position your receipt in the frame and tap capture
-              </DialogDescription>
-            </DialogHeader>
-            <div className="space-y-4">
-              <div className="relative rounded-lg overflow-hidden bg-black aspect-video">
+          <DialogContent className="sm:max-w-3xl p-0 overflow-hidden">
+            <div className="p-4 border-b bg-background">
+              <DialogHeader>
+                <DialogTitle className="flex items-center gap-2">
+                  <Camera className="h-5 w-5" />
+                  Capture Receipt
+                </DialogTitle>
+                <DialogDescription>
+                  Position the entire receipt within the frame for best results
+                </DialogDescription>
+              </DialogHeader>
+            </div>
+            
+            <div className="relative">
+              <div className="relative bg-black" style={{ aspectRatio: '4/3' }}>
                 <video
                   ref={videoRef}
                   autoPlay
@@ -697,24 +729,72 @@ export default function Home() {
                   className="w-full h-full object-cover"
                   data-testid="video-camera"
                 />
+                
+                <div className="absolute inset-0 pointer-events-none">
+                  <div className="absolute inset-4 sm:inset-8 border-2 border-white/60 rounded-lg">
+                    <div className="absolute -top-px -left-px w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg" />
+                    <div className="absolute -top-px -right-px w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg" />
+                    <div className="absolute -bottom-px -left-px w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg" />
+                    <div className="absolute -bottom-px -right-px w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg" />
+                  </div>
+                  
+                  <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5" data-testid="text-camera-guidance">
+                    <Focus className="h-3 w-3" />
+                    Align receipt edges with the frame
+                  </div>
+                </div>
+                
+                {flashSupported && (
+                  <Button
+                    onClick={toggleFlash}
+                    variant="ghost"
+                    size="icon"
+                    className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white"
+                    data-testid="button-flash"
+                  >
+                    {flashEnabled ? (
+                      <Flashlight className="h-5 w-5 text-yellow-400" />
+                    ) : (
+                      <FlashlightOff className="h-5 w-5" />
+                    )}
+                  </Button>
+                )}
               </div>
-              <div className="flex gap-2">
-                <Button
-                  onClick={capturePhoto}
-                  className="flex-1"
-                  data-testid="button-capture"
-                >
-                  <Camera className="h-4 w-4 mr-2" />
-                  Capture Photo
-                </Button>
-                <Button
-                  onClick={closeCamera}
-                  variant="outline"
-                  data-testid="button-cancel-camera"
-                >
-                  Cancel
-                </Button>
+              
+              <div className="p-3 bg-muted/50 border-t" data-testid="container-camera-tips">
+                <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-medium text-foreground" data-testid="text-tips-title">Tips for best results:</p>
+                    <ul className="space-y-0.5" data-testid="list-camera-tips">
+                      <li>Place receipt on a flat, contrasting surface</li>
+                      <li>Ensure good lighting (use flash if needed)</li>
+                      <li>Keep camera steady and parallel to receipt</li>
+                      <li>Make sure all text is readable and not blurry</li>
+                    </ul>
+                  </div>
+                </div>
               </div>
+            </div>
+            
+            <div className="flex gap-2 p-4 border-t bg-background">
+              <Button
+                onClick={capturePhoto}
+                className="flex-1"
+                size="lg"
+                data-testid="button-capture"
+              >
+                <Camera className="h-5 w-5 mr-2" />
+                Capture Photo
+              </Button>
+              <Button
+                onClick={closeCamera}
+                variant="outline"
+                size="lg"
+                data-testid="button-cancel-camera"
+              >
+                Cancel
+              </Button>
             </div>
           </DialogContent>
         </Dialog>
