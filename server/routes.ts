@@ -12,7 +12,7 @@ import { insertPurchaseSchema, insertSettingsSchema, insertUserSchema, updateUse
 import { comparePassword } from "./auth";
 import { randomBytes } from "crypto";
 import { processReceipt } from "./lib/ocr";
-import { generateReceiptPDF } from "./lib/pdf";
+import { generateReceiptPDF, generateExpenseReportPDF } from "./lib/pdf";
 import { readFile } from "fs/promises";
 import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail } from "./lib/email";
 
@@ -345,30 +345,29 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
 
-      // Generate email verification token and send verification email
-      if (input.email) {
-        const verificationToken = generateResetToken();
-        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
-        
-        await storage.createEmailVerificationToken(user.id, verificationToken, expiresAt);
-        
-        const baseUrl = `${req.protocol}://${req.get("host")}`;
-        const verifyLink = `${baseUrl}/verify-email?token=${verificationToken}`;
-        
-        const emailHtml = generateEmailVerificationEmail(verifyLink, user.fullName);
-        const emailSent = await sendEmail(input.email, "Verify Your Email - SlipSafe", emailHtml);
-        
-        if (!emailSent) {
-          console.warn(`[Registration] Failed to send verification email to ${input.email}`);
+      // Email verification temporarily disabled - auto-login after registration
+      // TODO: Re-enable when domain is verified with Resend
+      // if (input.email) {
+      //   const verificationToken = generateResetToken();
+      //   const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      //   await storage.createEmailVerificationToken(user.id, verificationToken, expiresAt);
+      //   const baseUrl = `${req.protocol}://${req.get("host")}`;
+      //   const verifyLink = `${baseUrl}/verify-email?token=${verificationToken}`;
+      //   const emailHtml = generateEmailVerificationEmail(verifyLink, user.fullName);
+      //   await sendEmail(input.email, "Verify Your Email - SlipSafe", emailHtml);
+      // }
+      
+      req.login(user, async (err) => {
+        if (err) {
+          console.error("Login after registration failed:", err);
+          return res.status(500).json({ error: "Registration succeeded but login failed" });
         }
-      }
-      
-      await logUserActivity(user.id, "register", { accountType: input.accountType }, req);
-      
-      res.json({
-        success: true,
-        message: "Registration successful! Please check your email to verify your account before logging in.",
-        requiresVerification: true
+        await logUserActivity(user.id, "register", { accountType: input.accountType }, req);
+        const { password, ...userWithoutPassword } = user;
+        res.json({
+          success: true,
+          user: userWithoutPassword
+        });
       });
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -1141,6 +1140,133 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Personal user reports - returns and warranty focused
+  app.get("/api/reports/personal", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // For personal context (individual users always use personal context)
+      const purchases = await storage.getPurchasesByContext(userId, "personal");
+      const today = new Date().toISOString().split('T')[0];
+      
+      // Calculate totals
+      let totalSpent = 0;
+      let pendingReturns = 0;
+      let expiredReturns = 0;
+      let activeWarranties = 0;
+      let expiredWarranties = 0;
+      const byCategory: Record<string, { count: number; total: number }> = {};
+      const byMonth: Record<string, { count: number; total: number }> = {};
+      const upcomingReturns: Array<{ merchant: string; date: string; returnBy: string; total: string; daysLeft: number }> = [];
+      const upcomingWarrantyExpiries: Array<{ merchant: string; date: string; warrantyEnds: string; total: string; daysLeft: number }> = [];
+      const warrantyStatus: { active: number; expiringSoon: number; expired: number } = { active: 0, expiringSoon: 0, expired: 0 };
+
+      for (const purchase of purchases) {
+        const amount = parseFloat(purchase.total) || 0;
+        totalSpent += amount;
+
+        // Returns analysis
+        if (purchase.returnBy) {
+          if (purchase.returnBy >= today) {
+            pendingReturns++;
+            const daysLeft = Math.ceil((new Date(purchase.returnBy).getTime() - new Date(today).getTime()) / (1000 * 60 * 60 * 24));
+            if (daysLeft <= 14) {
+              upcomingReturns.push({
+                merchant: purchase.merchant,
+                date: purchase.date,
+                returnBy: purchase.returnBy,
+                total: purchase.total,
+                daysLeft
+              });
+            }
+          } else {
+            expiredReturns++;
+          }
+        }
+
+        // Warranty analysis - mutually exclusive categories
+        if (purchase.warrantyEnds) {
+          const daysLeft = Math.ceil((new Date(purchase.warrantyEnds).getTime() - new Date(today).getTime()) / (1000 * 60 * 60 * 24));
+          if (daysLeft > 30) {
+            // Active: more than 30 days left
+            activeWarranties++;
+            warrantyStatus.active++;
+          } else if (daysLeft >= 1) {
+            // Expiring soon: 1-30 days left
+            activeWarranties++; // Still counts as active for summary
+            warrantyStatus.expiringSoon++;
+            upcomingWarrantyExpiries.push({
+              merchant: purchase.merchant,
+              date: purchase.date,
+              warrantyEnds: purchase.warrantyEnds,
+              total: purchase.total,
+              daysLeft
+            });
+          } else {
+            // Expired: less than 1 day (past or today)
+            expiredWarranties++;
+            warrantyStatus.expired++;
+          }
+        }
+
+        // By category
+        const cat = purchase.category || "Other";
+        if (!byCategory[cat]) {
+          byCategory[cat] = { count: 0, total: 0 };
+        }
+        byCategory[cat].count++;
+        byCategory[cat].total += amount;
+
+        // By month
+        const month = purchase.date.substring(0, 7);
+        if (!byMonth[month]) {
+          byMonth[month] = { count: 0, total: 0 };
+        }
+        byMonth[month].count++;
+        byMonth[month].total += amount;
+      }
+
+      // Sort upcoming items by days left
+      upcomingReturns.sort((a, b) => a.daysLeft - b.daysLeft);
+      upcomingWarrantyExpiries.sort((a, b) => a.daysLeft - b.daysLeft);
+
+      res.json({
+        summary: {
+          totalReceipts: purchases.length,
+          totalSpent: totalSpent.toFixed(2),
+          pendingReturns,
+          expiredReturns,
+          activeWarranties,
+          expiredWarranties,
+        },
+        upcomingReturns: upcomingReturns.slice(0, 10),
+        upcomingWarrantyExpiries: upcomingWarrantyExpiries.slice(0, 10),
+        warrantyStatus,
+        byCategory: Object.entries(byCategory).map(([name, data]) => ({
+          name,
+          ...data,
+          total: data.total.toFixed(2),
+        })).sort((a, b) => b.count - a.count),
+        byMonth: Object.entries(byMonth).map(([month, data]) => ({
+          month,
+          ...data,
+          total: data.total.toFixed(2),
+        })).sort((a, b) => a.month.localeCompare(b.month)),
+      });
+    } catch (error: any) {
+      console.error("Personal reports error:", error);
+      res.status(500).json({ error: "Failed to generate personal report", message: error.message });
+    }
+  });
+
   app.get("/api/reports/summary", isAuthenticated, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
@@ -1151,6 +1277,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
+      }
+
+      // Restrict access to business accounts only
+      if (user.accountType !== "business") {
+        return res.status(403).json({ error: "Tax & Reports is only available for business accounts" });
       }
 
       const context = user.activeContext;
@@ -1248,6 +1379,145 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Reports summary error:", error);
       res.status(500).json({ error: "Failed to generate report", message: error.message });
+    }
+  });
+
+  // Generate PDF expense report for business users
+  app.get("/api/reports/pdf", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Restrict access to business accounts only
+      if (user.accountType !== "business") {
+        return res.status(403).json({ error: "PDF reports are only available for business accounts" });
+      }
+
+      // Get business profile for tax info
+      const businessProfile = await storage.getBusinessProfile(userId);
+      
+      const context = user.activeContext;
+      const { startDate, endDate, includeTransactions } = req.query;
+      
+      const purchases = await storage.getPurchasesByContext(userId, context);
+      
+      // Filter by date range if provided
+      let filteredPurchases = purchases;
+      if (startDate && typeof startDate === "string") {
+        filteredPurchases = filteredPurchases.filter(p => p.date >= startDate);
+      }
+      if (endDate && typeof endDate === "string") {
+        filteredPurchases = filteredPurchases.filter(p => p.date <= endDate);
+      }
+
+      // Calculate totals
+      let totalSpent = 0;
+      let totalTax = 0;
+      let totalVat = 0;
+      const byCategory: Record<string, { count: number; total: number; tax: number; vat: number }> = {};
+      const byMerchant: Record<string, { count: number; total: number; tax: number; vat: number }> = {};
+      const byMonth: Record<string, { count: number; total: number; tax: number; vat: number }> = {};
+
+      for (const purchase of filteredPurchases) {
+        const amount = parseFloat(purchase.total) || 0;
+        const tax = parseFloat(purchase.taxAmount || "0") || 0;
+        const vat = parseFloat(purchase.vatAmount || "0") || 0;
+        
+        totalSpent += amount;
+        totalTax += tax;
+        totalVat += vat;
+
+        // By category
+        const cat = purchase.category || "Other";
+        if (!byCategory[cat]) {
+          byCategory[cat] = { count: 0, total: 0, tax: 0, vat: 0 };
+        }
+        byCategory[cat].count++;
+        byCategory[cat].total += amount;
+        byCategory[cat].tax += tax;
+        byCategory[cat].vat += vat;
+
+        // By merchant
+        const merchant = purchase.merchant;
+        if (!byMerchant[merchant]) {
+          byMerchant[merchant] = { count: 0, total: 0, tax: 0, vat: 0 };
+        }
+        byMerchant[merchant].count++;
+        byMerchant[merchant].total += amount;
+        byMerchant[merchant].tax += tax;
+        byMerchant[merchant].vat += vat;
+
+        // By month
+        const month = purchase.date.substring(0, 7);
+        if (!byMonth[month]) {
+          byMonth[month] = { count: 0, total: 0, tax: 0, vat: 0 };
+        }
+        byMonth[month].count++;
+        byMonth[month].total += amount;
+        byMonth[month].tax += tax;
+        byMonth[month].vat += vat;
+      }
+
+      // Prepare report data
+      const reportData = {
+        businessName: businessProfile?.businessName || "Business Account",
+        taxId: businessProfile?.taxId || undefined,
+        vatNumber: businessProfile?.vatNumber || undefined,
+        reportPeriod: {
+          startDate: typeof startDate === "string" ? startDate : undefined,
+          endDate: typeof endDate === "string" ? endDate : undefined,
+        },
+        summary: {
+          totalReceipts: filteredPurchases.length,
+          totalSpent,
+          totalTax,
+          totalVat,
+        },
+        byCategory: Object.entries(byCategory).map(([name, data]) => ({
+          name,
+          ...data,
+        })).sort((a, b) => b.total - a.total),
+        byMerchant: Object.entries(byMerchant).map(([name, data]) => ({
+          name,
+          ...data,
+        })).sort((a, b) => b.total - a.total),
+        byMonth: Object.entries(byMonth).map(([month, data]) => ({
+          month,
+          ...data,
+        })).sort((a, b) => a.month.localeCompare(b.month)),
+        transactions: includeTransactions === "true" ? filteredPurchases.map(p => ({
+          date: p.date,
+          merchant: p.merchant,
+          category: p.category || "Other",
+          total: parseFloat(p.total) || 0,
+          tax: parseFloat(p.taxAmount || "0") || 0,
+          vat: parseFloat(p.vatAmount || "0") || 0,
+        })).sort((a, b) => b.date.localeCompare(a.date)) : undefined,
+      };
+
+      // Generate PDF
+      const doc = generateExpenseReportPDF(reportData);
+      
+      // Set response headers for PDF download
+      const filename = `slipsafe-expense-report-${new Date().toISOString().split('T')[0]}.pdf`;
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+      
+      // Pipe the PDF to the response
+      doc.pipe(res);
+      doc.end();
+      
+      await logUserActivity(userId, "report_generated", { format: "pdf", context }, req);
+    } catch (error: any) {
+      console.error("PDF report generation error:", error);
+      res.status(500).json({ error: "Failed to generate PDF report", message: error.message });
     }
   });
 
