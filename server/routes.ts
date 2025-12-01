@@ -14,7 +14,7 @@ import { randomBytes } from "crypto";
 import { processReceipt } from "./lib/ocr";
 import { generateReceiptPDF } from "./lib/pdf";
 import { readFile } from "fs/promises";
-import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail } from "./lib/email";
+import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail } from "./lib/email";
 
 async function logUserActivity(
   userId: string, 
@@ -301,16 +301,26 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (existing) {
         return res.status(409).json({ error: "Username already exists" });
       }
+
+      // Check if email is already in use
+      if (input.email) {
+        const existingEmail = await storage.getUserByEmail(input.email);
+        if (existingEmail) {
+          return res.status(409).json({ error: "Email address is already registered" });
+        }
+      }
       
       const hashedPassword = await hashPassword(input.password);
       const userData = insertUserSchema.parse({
         username: input.username,
+        fullName: input.fullName,
         password: hashedPassword,
         email: input.email,
         phone: input.phone,
         homeAddress: input.homeAddress,
         idNumber: input.idNumber,
-        accountType: input.accountType
+        accountType: input.accountType,
+        emailVerified: false
       });
       
       const user = await storage.createUser(userData);
@@ -334,18 +344,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
           throw new Error("Failed to create business profile");
         }
       }
-      
-      req.login(user, async (err) => {
-        if (err) {
-          console.error("Login after registration failed:", err);
-          return res.status(500).json({ error: "Registration succeeded but login failed" });
+
+      // Generate email verification token and send verification email
+      if (input.email) {
+        const verificationToken = generateResetToken();
+        const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
+        
+        await storage.createEmailVerificationToken(user.id, verificationToken, expiresAt);
+        
+        const baseUrl = `${req.protocol}://${req.get("host")}`;
+        const verifyLink = `${baseUrl}/verify-email?token=${verificationToken}`;
+        
+        const emailHtml = generateEmailVerificationEmail(verifyLink, user.fullName);
+        const emailSent = await sendEmail(input.email, "Verify Your Email - SlipSafe", emailHtml);
+        
+        if (!emailSent) {
+          console.warn(`[Registration] Failed to send verification email to ${input.email}`);
         }
-        await logUserActivity(user.id, "register", { accountType: input.accountType }, req);
-        const { password, ...userWithoutPassword } = user;
-        res.json({
-          success: true,
-          user: userWithoutPassword
-        });
+      }
+      
+      await logUserActivity(user.id, "register", { accountType: input.accountType }, req);
+      
+      res.json({
+        success: true,
+        message: "Registration successful! Please check your email to verify your account before logging in.",
+        requiresVerification: true
       });
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -398,6 +421,99 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       res.json({ success: true });
     });
+  });
+
+  app.get("/api/auth/verify-email", async (req, res) => {
+    try {
+      const { token } = req.query;
+      
+      if (!token || typeof token !== "string") {
+        return res.status(400).json({ error: "Invalid verification link" });
+      }
+      
+      await storage.cleanupExpiredTokens();
+      
+      const verificationToken = await storage.getEmailVerificationToken(token);
+      
+      if (!verificationToken) {
+        return res.status(400).json({ error: "Invalid or expired verification link. Please request a new one." });
+      }
+      
+      if (new Date() > verificationToken.expiresAt) {
+        await storage.deleteEmailVerificationToken(token);
+        return res.status(400).json({ error: "Verification link has expired. Please request a new one." });
+      }
+      
+      const user = await storage.getUser(verificationToken.userId);
+      if (!user) {
+        await storage.deleteEmailVerificationToken(token);
+        return res.status(400).json({ error: "User account not found" });
+      }
+      
+      if (user.emailVerified) {
+        await storage.deleteEmailVerificationToken(token);
+        return res.json({ success: true, message: "Email already verified. You can now log in.", alreadyVerified: true });
+      }
+      
+      await storage.verifyUserEmail(user.id);
+      await storage.deleteEmailVerificationToken(token);
+      
+      await logUserActivity(user.id, "email_verified", undefined, req);
+      
+      if (user.email) {
+        const welcomeHtml = generateWelcomeEmail(user.fullName, user.username);
+        await sendEmail(user.email, "Welcome to SlipSafe!", welcomeHtml);
+      }
+      
+      res.json({ 
+        success: true, 
+        message: "Email verified successfully! You can now log in to your account."
+      });
+    } catch (error: any) {
+      console.error("Email verification error:", error);
+      res.status(500).json({ error: "Verification failed. Please try again." });
+    }
+  });
+
+  app.post("/api/auth/resend-verification", async (req, res) => {
+    try {
+      const { email } = req.body;
+      
+      if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+      }
+      
+      const identifier = `resend-verification:${email}`;
+      if (!rateLimit(identifier, 3, 15 * 60 * 1000)) {
+        return res.status(429).json({ error: "Too many requests. Please try again in 15 minutes." });
+      }
+      
+      const user = await storage.getUserByEmail(email);
+      
+      if (!user) {
+        return res.json({ success: true, message: "If an account exists with this email, a new verification link has been sent." });
+      }
+      
+      if (user.emailVerified) {
+        return res.json({ success: true, message: "Email is already verified. You can log in." });
+      }
+      
+      const verificationToken = generateResetToken();
+      const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      
+      await storage.createEmailVerificationToken(user.id, verificationToken, expiresAt);
+      
+      const baseUrl = `${req.protocol}://${req.get("host")}`;
+      const verifyLink = `${baseUrl}/verify-email?token=${verificationToken}`;
+      
+      const emailHtml = generateEmailVerificationEmail(verifyLink, user.fullName);
+      await sendEmail(email, "Verify Your Email - SlipSafe", emailHtml);
+      
+      res.json({ success: true, message: "If an account exists with this email, a new verification link has been sent." });
+    } catch (error: any) {
+      console.error("Resend verification error:", error);
+      res.status(500).json({ error: "Failed to resend verification email" });
+    }
   });
 
   app.post("/api/auth/forgot-username", async (req, res) => {
@@ -553,7 +669,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const { password, ...userWithoutPassword } = fullUser;
-      res.json({ user: userWithoutPassword });
+      
+      // Include business profile data if user is a business account
+      let businessProfile = null;
+      if (fullUser.accountType === "business") {
+        businessProfile = await storage.getBusinessProfile(fullUser.id);
+      }
+      
+      res.json({ 
+        user: {
+          ...userWithoutPassword,
+          businessName: businessProfile?.businessName || null,
+          businessProfile: businessProfile || null,
+        }
+      });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch user data", message: error.message });
     }
@@ -601,7 +730,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       await logUserActivity(userId, "context_switch", { newContext: context }, req);
       const { password, ...userWithoutPassword } = updatedUser;
-      res.json({ success: true, user: userWithoutPassword });
+      
+      // Include business profile data for consistent response
+      let businessProfile = null;
+      if (updatedUser.accountType === "business") {
+        businessProfile = await storage.getBusinessProfile(updatedUser.id);
+      }
+      
+      res.json({ 
+        success: true, 
+        user: {
+          ...userWithoutPassword,
+          businessName: businessProfile?.businessName || null,
+          businessProfile: businessProfile || null,
+        }
+      });
     } catch (error: any) {
       console.error("Context switch error:", error);
       res.status(500).json({ error: "Failed to switch context", message: error.message });

@@ -20,6 +20,10 @@ passport.use(
         return done(null, false, { message: "Incorrect username or password" });
       }
 
+      if (!user.emailVerified) {
+        return done(null, false, { message: "Please verify your email address before logging in. Check your inbox for the verification link." });
+      }
+
       return done(null, user);
     } catch (error) {
       return done(error);

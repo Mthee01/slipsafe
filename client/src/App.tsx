@@ -25,6 +25,8 @@ import Register from "@/pages/register";
 import ForgotUsername from "@/pages/forgot-username";
 import ForgotPassword from "@/pages/forgot-password";
 import ResetPassword from "@/pages/reset-password";
+import RegistrationSuccess from "@/pages/registration-success";
+import VerifyEmail from "@/pages/verify-email";
 import NotFound from "@/pages/not-found";
 import AdminDashboard from "@/pages/admin";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
@@ -101,6 +103,8 @@ function AppContent() {
       <Switch>
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />
+        <Route path="/registration-success" component={RegistrationSuccess} />
+        <Route path="/verify-email" component={VerifyEmail} />
         <Route path="/forgot-username" component={ForgotUsername} />
         <Route path="/forgot-password" component={ForgotPassword} />
         <Route path="/reset-password" component={ResetPassword} />

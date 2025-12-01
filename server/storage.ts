@@ -1,4 +1,4 @@
-import { type User, type InsertUser, type UpdateUserProfile, type Purchase, type InsertPurchase, type Settings, type InsertSettings, type PasswordResetToken, type BusinessProfile, type InsertBusinessProfile, type UpdateBusinessProfile, type Client, type InsertClient, type UpdateClient, type MerchantRule, type InsertMerchantRule, type UserActivity, type InsertUserActivity, users, purchases, settings, passwordResetTokens, businessProfiles, clients, merchantRules, userActivity, normalizePhone } from "@shared/schema";
+import { type User, type InsertUser, type UpdateUserProfile, type Purchase, type InsertPurchase, type Settings, type InsertSettings, type PasswordResetToken, type EmailVerificationToken, type BusinessProfile, type InsertBusinessProfile, type UpdateBusinessProfile, type Client, type InsertClient, type UpdateClient, type MerchantRule, type InsertMerchantRule, type UserActivity, type InsertUserActivity, users, purchases, settings, passwordResetTokens, emailVerificationTokens, businessProfiles, clients, merchantRules, userActivity, normalizePhone } from "@shared/schema";
 import { db } from "./db";
 import { eq, and, ilike, or, lt, desc, sql, count } from "drizzle-orm";
 
@@ -19,6 +19,11 @@ export interface IStorage {
   getPasswordResetToken(token: string): Promise<PasswordResetToken | undefined>;
   deletePasswordResetToken(token: string): Promise<void>;
   cleanupExpiredTokens(): Promise<void>;
+  
+  createEmailVerificationToken(userId: string, token: string, expiresAt: Date): Promise<EmailVerificationToken>;
+  getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined>;
+  deleteEmailVerificationToken(token: string): Promise<void>;
+  verifyUserEmail(userId: string): Promise<User | undefined>;
   
   getBusinessProfile(userId: string): Promise<BusinessProfile | undefined>;
   createBusinessProfile(profile: InsertBusinessProfile): Promise<BusinessProfile>;
@@ -149,6 +154,33 @@ export class DatabaseStorage implements IStorage {
 
   async cleanupExpiredTokens(): Promise<void> {
     await db.delete(passwordResetTokens).where(lt(passwordResetTokens.expiresAt, new Date()));
+    await db.delete(emailVerificationTokens).where(lt(emailVerificationTokens.expiresAt, new Date()));
+  }
+
+  async createEmailVerificationToken(userId: string, token: string, expiresAt: Date): Promise<EmailVerificationToken> {
+    const [verificationToken] = await db.insert(emailVerificationTokens).values({
+      userId,
+      token,
+      expiresAt,
+    }).returning();
+    return verificationToken;
+  }
+
+  async getEmailVerificationToken(token: string): Promise<EmailVerificationToken | undefined> {
+    const [verificationToken] = await db.select().from(emailVerificationTokens).where(eq(emailVerificationTokens.token, token));
+    return verificationToken;
+  }
+
+  async deleteEmailVerificationToken(token: string): Promise<void> {
+    await db.delete(emailVerificationTokens).where(eq(emailVerificationTokens.token, token));
+  }
+
+  async verifyUserEmail(userId: string): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set({ emailVerified: true })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
   }
 
   async getBusinessProfile(userId: string): Promise<BusinessProfile | undefined> {

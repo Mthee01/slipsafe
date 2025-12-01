@@ -6,7 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
-import { Eye, EyeOff } from "lucide-react";
+import { Eye, EyeOff, Mail } from "lucide-react";
 
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
@@ -20,6 +20,8 @@ export default function Login() {
     e.preventDefault();
     login({ username, password });
   };
+
+  const isEmailVerificationError = loginError?.message?.toLowerCase().includes("verify your email");
 
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
@@ -36,9 +38,15 @@ export default function Login() {
         <form onSubmit={handleSubmit}>
           <CardContent className="space-y-4">
             {loginError && (
-              <Alert variant="destructive" data-testid="alert-login-error">
-                <AlertDescription>
-                  {loginError.message || "Invalid username or password"}
+              <Alert variant={isEmailVerificationError ? "default" : "destructive"} data-testid="alert-login-error">
+                <AlertDescription className="space-y-2">
+                  <p>{loginError.message || "Invalid username or password"}</p>
+                  {isEmailVerificationError && (
+                    <Link href="/registration-success" className="flex items-center gap-2 text-primary hover:underline mt-2" data-testid="link-resend-verification">
+                      <Mail className="h-4 w-4" />
+                      Resend verification email
+                    </Link>
+                  )}
                 </AlertDescription>
               </Alert>
             )}

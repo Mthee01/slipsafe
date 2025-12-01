@@ -12,8 +12,10 @@ export type UserRole = typeof USER_ROLES[number];
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
+  fullName: text("full_name").notNull(),
   password: text("password").notNull(),
-  email: text("email"),
+  email: text("email").notNull(),
+  emailVerified: boolean("email_verified").notNull().default(false),
   phone: text("phone"),
   homeAddress: text("home_address"),
   idNumber: text("id_number"),
@@ -25,6 +27,7 @@ export const users = pgTable("users", {
 
 export const insertUserSchema = createInsertSchema(users).pick({
   username: true,
+  fullName: true,
   password: true,
   email: true,
   phone: true,
@@ -32,6 +35,8 @@ export const insertUserSchema = createInsertSchema(users).pick({
   idNumber: true,
   accountType: true,
 }).extend({
+  fullName: z.string().min(1, "Full name is required"),
+  email: z.string().email("Please enter a valid email address"),
   phone: z.string().min(10, "Phone number is required"),
 });
 
@@ -41,7 +46,8 @@ export function normalizePhone(phone: string): string {
 
 export const registerSchema = z.object({
   username: z.string().min(1, "Username is required"),
-  email: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
+  fullName: z.string().min(1, "Full name is required"),
+  email: z.string().email("Please enter a valid email address"),
   password: z.string().min(6, "Password must be at least 6 characters"),
   phone: z.string().min(10, "Please enter a valid phone number"),
   accountType: z.enum(ACCOUNT_TYPES),
@@ -339,10 +345,21 @@ export type ForgotPassword = z.infer<typeof forgotPasswordSchema>;
 export type ResetPassword = z.infer<typeof resetPasswordSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
 
+export const emailVerificationTokens = pgTable("email_verification_tokens", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  token: text("token").notNull().unique(),
+  expiresAt: timestamp("expires_at").notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export type EmailVerificationToken = typeof emailVerificationTokens.$inferSelect;
+
 export const ACTIVITY_TYPES = [
   "login",
   "logout",
   "register",
+  "email_verified",
   "receipt_upload",
   "claim_create",
   "claim_verify",

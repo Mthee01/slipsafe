@@ -206,3 +206,143 @@ export function generateUsernameRecoveryEmail(username: string): string {
 </html>
   `.trim();
 }
+
+export function generateEmailVerificationEmail(verifyLink: string, fullName: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Verify Your Email - SlipSafe</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" max-width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 32px; border-radius: 8px 8px 0 0; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SlipSafe</h1>
+              <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">Your receipts, secured</p>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 32px;">
+              <h2 style="color: #18181b; margin: 0 0 16px 0; font-size: 20px; font-weight: 600;">Welcome to SlipSafe, ${fullName}!</h2>
+              <p style="color: #52525b; margin: 0 0 24px 0; font-size: 16px; line-height: 1.6;">
+                Thank you for registering. Please verify your email address by clicking the button below to complete your registration.
+              </p>
+              
+              <!-- Button -->
+              <table width="100%" cellpadding="0" cellspacing="0">
+                <tr>
+                  <td align="center" style="padding: 16px 0;">
+                    <a href="${verifyLink}" style="display: inline-block; background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); color: #ffffff; text-decoration: none; padding: 14px 32px; border-radius: 6px; font-size: 16px; font-weight: 600;">
+                      Verify Email Address
+                    </a>
+                  </td>
+                </tr>
+              </table>
+              
+              <p style="color: #71717a; margin: 24px 0 0 0; font-size: 14px; line-height: 1.6;">
+                This link will expire in <strong>24 hours</strong>. If you didn't create an account with SlipSafe, you can safely ignore this email.
+              </p>
+              
+              <!-- Fallback Link -->
+              <div style="margin-top: 24px; padding: 16px; background-color: #f4f4f5; border-radius: 6px;">
+                <p style="color: #71717a; margin: 0 0 8px 0; font-size: 12px;">If the button doesn't work, copy and paste this link:</p>
+                <p style="color: #4f46e5; margin: 0; font-size: 12px; word-break: break-all;">${verifyLink}</p>
+              </div>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 32px; border-top: 1px solid #e4e4e7; text-align: center;">
+              <p style="color: #a1a1aa; margin: 0; font-size: 12px;">
+                This is an automated message from SlipSafe. Please do not reply to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}
+
+export function generateWelcomeEmail(fullName: string, username: string): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Welcome to SlipSafe</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" max-width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 32px; border-radius: 8px 8px 0 0; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SlipSafe</h1>
+              <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">Your receipts, secured</p>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 32px;">
+              <h2 style="color: #18181b; margin: 0 0 16px 0; font-size: 20px; font-weight: 600;">Welcome, ${fullName}!</h2>
+              <p style="color: #52525b; margin: 0 0 24px 0; font-size: 16px; line-height: 1.6;">
+                Your email has been verified and your SlipSafe account is now active. You can start managing your receipts securely.
+              </p>
+              
+              <!-- Account Details Box -->
+              <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #4f46e5; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #71717a; margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Your Account Details</p>
+                <p style="color: #18181b; margin: 0 0 4px 0; font-size: 16px;"><strong>Username:</strong> ${username}</p>
+              </div>
+              
+              <p style="color: #52525b; margin: 0 0 24px 0; font-size: 16px; line-height: 1.6;">
+                Here's what you can do with SlipSafe:
+              </p>
+              
+              <ul style="color: #52525b; margin: 0 0 24px 0; padding-left: 24px; font-size: 15px; line-height: 1.8;">
+                <li>Upload and digitize your receipts using OCR</li>
+                <li>Track return deadlines and warranty expiry dates</li>
+                <li>Generate verifiable claims with QR codes</li>
+                <li>Manage both personal and business receipts</li>
+              </ul>
+              
+              <p style="color: #71717a; margin: 24px 0 0 0; font-size: 14px; line-height: 1.6;">
+                For security reasons, we do not include your password in this email. If you forget your password, you can always reset it from the login page.
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 32px; border-top: 1px solid #e4e4e7; text-align: center;">
+              <p style="color: #a1a1aa; margin: 0; font-size: 12px;">
+                This is an automated message from SlipSafe. Please do not reply to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}

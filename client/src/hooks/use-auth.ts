@@ -5,6 +5,7 @@ import { useLocation } from "wouter";
 interface User {
   id: string;
   username: string;
+  fullName: string;
   email?: string | null;
   phone?: string | null;
   homeAddress?: string | null;
@@ -13,6 +14,12 @@ interface User {
   accountType?: string;
   activeContext?: string;
   role?: string;
+  businessName?: string | null;
+  businessProfile?: {
+    businessName: string;
+    taxId?: string | null;
+    vatNumber?: string | null;
+  } | null;
 }
 
 interface AuthResponse {
@@ -59,9 +66,10 @@ export function useAuth() {
     }
   });
 
-  const registerMutation = useMutation<AuthResponse, Error, {
+  const registerMutation = useMutation<AuthResponse & { requiresVerification?: boolean; message?: string }, Error, {
     username: string;
-    email?: string;
+    fullName: string;
+    email: string;
     phone: string;
     password: string;
     accountType: "individual" | "business";
@@ -76,8 +84,12 @@ export function useAuth() {
       return response.json();
     },
     onSuccess: (data) => {
-      queryClient.setQueryData(["/api/users/me"], data.user);
-      setLocation("/");
+      if (data.requiresVerification) {
+        setLocation("/registration-success");
+      } else if (data.user) {
+        queryClient.setQueryData(["/api/users/me"], data.user);
+        setLocation("/");
+      }
     }
   });
 

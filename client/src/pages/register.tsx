@@ -14,6 +14,7 @@ import logo from "@assets/SlipSafe Logo_1762888976121.png";
 export default function Register() {
   const { register, isRegistering, registerError } = useAuth();
   const [username, setUsername] = useState("");
+  const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
@@ -29,6 +30,16 @@ export default function Register() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (!fullName.trim()) {
+      setError("Full name is required");
+      return;
+    }
+
+    if (!email.trim() || !email.includes("@")) {
+      setError("Please enter a valid email address");
+      return;
+    }
 
     if (!phone || phone.length < 10) {
       setError("Please enter a valid phone number (at least 10 digits)");
@@ -51,8 +62,9 @@ export default function Register() {
     }
 
     register({ 
-      username, 
-      email: email || undefined,
+      username,
+      fullName,
+      email,
       phone,
       password, 
       accountType,
@@ -128,7 +140,21 @@ export default function Register() {
             </div>
 
             <div className="space-y-2">
-              <Label htmlFor="username">Username</Label>
+              <Label htmlFor="fullName">Full Name *</Label>
+              <Input
+                id="fullName"
+                data-testid="input-full-name"
+                type="text"
+                placeholder="Your full name"
+                value={fullName}
+                onChange={(e) => setFullName(e.target.value)}
+                autoComplete="name"
+                required
+                disabled={isRegistering}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="username">Username *</Label>
               <Input
                 id="username"
                 data-testid="input-username"
@@ -156,7 +182,7 @@ export default function Register() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email (Optional)</Label>
+              <Label htmlFor="email">Email *</Label>
               <Input
                 id="email"
                 data-testid="input-email"
@@ -165,6 +191,7 @@ export default function Register() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
+                required
                 disabled={isRegistering}
               />
             </div>

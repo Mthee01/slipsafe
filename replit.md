@@ -21,13 +21,14 @@ Preferred communication style: Simple, everyday language.
 - **OCR Pipeline**: Processes uploaded receipts (JPEG/PNG/PDF) using Tesseract.js for text extraction. Employs enhanced regex and heuristics to extract merchant, date, and total, with robust date normalization and validation. Computes return/warranty deadlines and generates an SHA256 hash for deduplication.
 - **Claim System**: Generates JWT tokens with 90-day expiration for claims, uses 6-digit random PINs for verification, and QR codes encoding verification URLs.
 - **Security**: Session-based authentication with `passport-local`, rate limiting on authentication endpoints, and 1-hour expiring, single-use password reset tokens. Generic API responses prevent user enumeration.
-- **Email System**: Integrates with Resend for professional HTML email delivery for account recovery (forgot username/password), featuring SlipSafe branding and security measures like rate limiting and token expiration.
-- **Context Switching**: Business accounts can toggle between personal and business modes to manage receipts separately, with the active context persisting across sessions.
+- **Email Verification**: Registration requires email verification before login. Verification tokens expire after 24 hours. Welcome email sent after verification (includes username only, NOT password for security). Resend verification option available on login page and registration-success page.
+- **Email System**: Integrates with Resend for professional HTML email delivery for email verification, welcome confirmation, and account recovery (forgot username/password), featuring SlipSafe branding and security measures like rate limiting and token expiration.
+- **Context Switching**: Business accounts can toggle between personal and business modes to manage receipts separately, with the active context persisting across sessions. The sidebar displays the business name prominently when in business mode, and the user's full name in personal mode.
 - **Tax & Reports**: Comprehensive reporting system (`/api/reports`) for business users with tax/VAT summaries, expense categorization by category and vendor, monthly trends with visual charts (Recharts), and CSV export functionality.
 
 **Data Storage**:
 - **Database**: PostgreSQL, primarily via Neon serverless driver with Drizzle ORM, for persistent storage of users, purchases, and settings.
-- **Schema**: Includes `users` and `purchases` tables, with hash-based deduplication for receipts.
+- **Schema**: Includes `users` table (with fullName, username, phone, email, accountType fields), `business_profiles` table (for business-specific info like businessName, taxId, vatNumber), and `purchases` tables with hash-based deduplication for receipts. Registration requires both fullName and username as mandatory fields.
 
 ## External Dependencies
 
