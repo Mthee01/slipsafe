@@ -6,6 +6,9 @@ import { z } from "zod";
 export const ACCOUNT_TYPES = ["individual", "business"] as const;
 export type AccountType = typeof ACCOUNT_TYPES[number];
 
+export const USER_ROLES = ["user", "admin"] as const;
+export type UserRole = typeof USER_ROLES[number];
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
@@ -17,6 +20,7 @@ export const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   accountType: text("account_type").notNull().default("individual"),
   activeContext: text("active_context").notNull().default("personal"),
+  role: text("role").notNull().default("user"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -27,13 +31,19 @@ export const insertUserSchema = createInsertSchema(users).pick({
   homeAddress: true,
   idNumber: true,
   accountType: true,
+}).extend({
+  phone: z.string().min(10, "Phone number is required"),
 });
+
+export function normalizePhone(phone: string): string {
+  return phone.replace(/[\s\-\(\)\.]/g, "");
+}
 
 export const registerSchema = z.object({
   username: z.string().min(1, "Username is required"),
-  email: z.string().email("Please enter a valid email address"),
+  email: z.string().email("Please enter a valid email address").optional().or(z.literal("")),
   password: z.string().min(6, "Password must be at least 6 characters"),
-  phone: z.string().optional(),
+  phone: z.string().min(10, "Please enter a valid phone number"),
   accountType: z.enum(ACCOUNT_TYPES),
   idNumber: z.string().optional(),
   homeAddress: z.string().optional(),
@@ -282,11 +292,37 @@ export const passwordResetTokens = pgTable("password_reset_tokens", {
 });
 
 export const forgotUsernameSchema = z.object({
-  email: z.string().email("Please enter a valid email address"),
+  recoveryMethod: z.enum(["email", "phone"]),
+  email: z.string().email("Please enter a valid email address").optional(),
+  phone: z.string().min(10, "Please enter a valid phone number").optional(),
+}).refine((data) => {
+  if (data.recoveryMethod === "email") {
+    return !!data.email && data.email.length > 0;
+  }
+  if (data.recoveryMethod === "phone") {
+    return !!data.phone && data.phone.length >= 10;
+  }
+  return false;
+}, {
+  message: "Please enter your email address or phone number",
+  path: ["email"],
 });
 
 export const forgotPasswordSchema = z.object({
-  usernameOrEmail: z.string().min(1, "Please enter your username or email"),
+  recoveryMethod: z.enum(["email", "phone"]),
+  usernameOrEmail: z.string().min(1, "Please enter your username or email").optional(),
+  usernameOrPhone: z.string().min(1, "Please enter your username or phone").optional(),
+}).refine((data) => {
+  if (data.recoveryMethod === "email") {
+    return !!data.usernameOrEmail && data.usernameOrEmail.length > 0;
+  }
+  if (data.recoveryMethod === "phone") {
+    return !!data.usernameOrPhone && data.usernameOrPhone.length > 0;
+  }
+  return false;
+}, {
+  message: "Please enter your username or contact information",
+  path: ["usernameOrEmail"],
 });
 
 export const resetPasswordSchema = z.object({
@@ -302,3 +338,35 @@ export type ForgotUsername = z.infer<typeof forgotUsernameSchema>;
 export type ForgotPassword = z.infer<typeof forgotPasswordSchema>;
 export type ResetPassword = z.infer<typeof resetPasswordSchema>;
 export type PasswordResetToken = typeof passwordResetTokens.$inferSelect;
+
+export const ACTIVITY_TYPES = [
+  "login",
+  "logout",
+  "register",
+  "receipt_upload",
+  "claim_create",
+  "claim_verify",
+  "context_switch",
+  "profile_update",
+  "password_change",
+  "business_profile_update",
+] as const;
+export type ActivityType = typeof ACTIVITY_TYPES[number];
+
+export const userActivity = pgTable("user_activity", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar("user_id").notNull(),
+  action: text("action").notNull(),
+  metadata: text("metadata"),
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertUserActivitySchema = createInsertSchema(userActivity).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertUserActivity = z.infer<typeof insertUserActivitySchema>;
+export type UserActivity = typeof userActivity.$inferSelect;

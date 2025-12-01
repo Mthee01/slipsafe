@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request } from "express";
 import express from "express";
 import { createServer, type Server } from "http";
 import multer from "multer";
@@ -8,13 +8,32 @@ import jwt from "jsonwebtoken";
 import passport from "./auth";
 import { hashPassword, isAuthenticated, getCurrentUserId } from "./auth";
 import { storage } from "./storage";
-import { insertPurchaseSchema, insertSettingsSchema, insertUserSchema, updateUserProfileSchema, changePasswordSchema, forgotUsernameSchema, forgotPasswordSchema, resetPasswordSchema, registerSchema, CATEGORIES, insertMerchantRuleSchema, updateMerchantRuleSchema } from "@shared/schema";
+import { insertPurchaseSchema, insertSettingsSchema, insertUserSchema, updateUserProfileSchema, updateBusinessProfileSchema, changePasswordSchema, forgotUsernameSchema, forgotPasswordSchema, resetPasswordSchema, registerSchema, CATEGORIES, insertMerchantRuleSchema, updateMerchantRuleSchema, type ActivityType } from "@shared/schema";
 import { comparePassword } from "./auth";
 import { randomBytes } from "crypto";
 import { processReceipt } from "./lib/ocr";
 import { generateReceiptPDF } from "./lib/pdf";
 import { readFile } from "fs/promises";
 import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail } from "./lib/email";
+
+async function logUserActivity(
+  userId: string, 
+  action: ActivityType, 
+  metadata?: Record<string, any>,
+  req?: Request
+) {
+  try {
+    await storage.logActivity({
+      userId,
+      action,
+      metadata: metadata ? JSON.stringify(metadata) : null,
+      ipAddress: req?.ip || req?.socket?.remoteAddress || null,
+      userAgent: req?.headers?.["user-agent"] || null,
+    });
+  } catch (error) {
+    console.error(`[Activity Log] Failed to log activity "${action}" for user ${userId}:`, error);
+  }
+}
 
 const upload = multer({ dest: "uploads/" });
 const JWT_SECRET = process.env.JWT_SECRET || "slipsafe_dev_secret";
@@ -38,7 +57,7 @@ const ocrPreviewCache = new Map<string, PreviewData>();
 // Clean up old preview cache entries (older than 1 hour)
 setInterval(() => {
   const oneHourAgo = Date.now() - (60 * 60 * 1000);
-  for (const [userId, data] of ocrPreviewCache.entries()) {
+  for (const [userId, data] of Array.from(ocrPreviewCache.entries())) {
     if (data.timestamp < oneHourAgo) {
       ocrPreviewCache.delete(userId);
     }
@@ -316,11 +335,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
       }
       
-      req.login(user, (err) => {
+      req.login(user, async (err) => {
         if (err) {
           console.error("Login after registration failed:", err);
           return res.status(500).json({ error: "Registration succeeded but login failed" });
         }
+        await logUserActivity(user.id, "register", { accountType: input.accountType }, req);
         const { password, ...userWithoutPassword } = user;
         res.json({
           success: true,
@@ -350,23 +370,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       
-      req.login(user, (loginErr) => {
+      req.login(user, async (loginErr) => {
         if (loginErr) {
           return res.status(500).json({ error: "Login failed. Please try again." });
         }
         
+        await logUserActivity(user.id, "login", undefined, req);
+        
+        // Return full user data (excluding password)
+        const { password, ...userWithoutPassword } = user;
         res.json({
           success: true,
-          user: {
-            id: user.id,
-            username: user.username
-          }
+          user: userWithoutPassword
         });
       });
     })(req, res, next);
   });
 
-  app.post("/api/auth/logout", (req, res) => {
+  app.post("/api/auth/logout", async (req, res) => {
+    const userId = getCurrentUserId(req);
+    if (userId) {
+      await logUserActivity(userId, "logout", undefined, req);
+    }
     req.logout((err) => {
       if (err) {
         return res.status(500).json({ error: "Logout failed" });
@@ -377,29 +402,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/forgot-username", async (req, res) => {
     try {
-      const { email } = forgotUsernameSchema.parse(req.body);
-      console.log(`[ForgotUsername] Processing request for email: ${email}`);
-      const identifier = `forgot-username:${email}`;
+      const data = forgotUsernameSchema.parse(req.body);
+      const { recoveryMethod, email, phone } = data;
+      const contactInfo = recoveryMethod === "email" ? email : phone;
+      console.log(`[ForgotUsername] Processing request via ${recoveryMethod}: ${contactInfo}`);
+      const identifier = `forgot-username:${contactInfo}`;
       
       if (!rateLimit(identifier, 3, 15 * 60 * 1000)) {
-        console.log(`[ForgotUsername] Rate limit exceeded for ${email}`);
+        console.log(`[ForgotUsername] Rate limit exceeded for ${contactInfo}`);
         return res.status(429).json({ error: "Too many requests. Please try again later." });
       }
       
-      const user = await storage.getUserByEmail(email);
+      let user;
+      if (recoveryMethod === "email" && email) {
+        user = await storage.getUserByEmail(email);
+      } else if (recoveryMethod === "phone" && phone) {
+        user = await storage.getUserByPhone(phone);
+      }
       console.log(`[ForgotUsername] User found: ${!!user}, username: ${user?.username}`);
       
-      if (user) {
+      if (user && recoveryMethod === "email" && email) {
         const emailHtml = generateUsernameRecoveryEmail(user.username);
         const sent = await sendEmail(email, "Your SlipSafe Username", emailHtml);
         console.log(`[ForgotUsername] Email sent: ${sent}`);
+      } else if (user && recoveryMethod === "phone") {
+        console.log(`[ForgotUsername] Would send SMS to ${phone} with username: ${user.username}`);
       } else {
-        console.log(`[ForgotUsername] No user found for email: ${email}`);
+        console.log(`[ForgotUsername] No user found for ${recoveryMethod}: ${contactInfo}`);
       }
+      
+      const message = recoveryMethod === "email" 
+        ? "If an account exists with this email, we've sent your username information."
+        : "If an account exists with this phone number, we've sent your username via SMS.";
       
       return res.json({ 
         success: true, 
-        message: "If an account exists with this email, we've sent your username information."
+        message
       });
     } catch (error: any) {
       console.error("Forgot username error:", error);
@@ -409,8 +447,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   app.post("/api/auth/forgot-password", async (req, res) => {
     try {
-      const { usernameOrEmail } = forgotPasswordSchema.parse(req.body);
-      const identifier = `forgot-password:${usernameOrEmail}`;
+      const data = forgotPasswordSchema.parse(req.body);
+      const { recoveryMethod, usernameOrEmail, usernameOrPhone } = data;
+      const contactInfo = recoveryMethod === "email" ? usernameOrEmail : usernameOrPhone;
+      const identifier = `forgot-password:${contactInfo}`;
       
       if (!rateLimit(identifier, 3, 15 * 60 * 1000)) {
         return res.status(429).json({ error: "Too many requests. Please try again later." });
@@ -418,12 +458,20 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       await storage.cleanupExpiredTokens();
       
-      let user = await storage.getUserByUsername(usernameOrEmail);
-      if (!user) {
-        user = await storage.getUserByEmail(usernameOrEmail);
+      let user;
+      if (recoveryMethod === "email" && usernameOrEmail) {
+        user = await storage.getUserByUsername(usernameOrEmail);
+        if (!user) {
+          user = await storage.getUserByEmail(usernameOrEmail);
+        }
+      } else if (recoveryMethod === "phone" && usernameOrPhone) {
+        user = await storage.getUserByUsername(usernameOrPhone);
+        if (!user) {
+          user = await storage.getUserByPhone(usernameOrPhone);
+        }
       }
       
-      if (user && user.email) {
+      if (user) {
         const token = generateResetToken();
         const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
         await storage.createPasswordResetToken(user.id, token, expiresAt);
@@ -432,14 +480,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const protocol = req.secure || req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http';
         const resetLink = `${protocol}://${host}/reset-password?token=${token}`;
         
-        const emailHtml = generatePasswordResetEmail(resetLink);
-        const sent = await sendEmail(user.email, "Reset Your Password - SlipSafe", emailHtml);
-        console.log(`[ForgotPassword] Email sent to ${user.email}: ${sent}`);
+        if (recoveryMethod === "email" && user.email) {
+          const emailHtml = generatePasswordResetEmail(resetLink);
+          const sent = await sendEmail(user.email, "Reset Your Password - SlipSafe", emailHtml);
+          console.log(`[ForgotPassword] Email sent to ${user.email}: ${sent}`);
+        } else if (recoveryMethod === "phone" && user.phone) {
+          console.log(`[ForgotPassword] Would send SMS to ${user.phone} with reset link: ${resetLink}`);
+        }
       }
+      
+      const message = recoveryMethod === "email"
+        ? "If an account exists, we've sent password reset instructions to your email."
+        : "If an account exists, we've sent password reset instructions via SMS.";
       
       return res.json({
         success: true,
-        message: "If an account exists, we've sent password reset instructions."
+        message
       });
     } catch (error: any) {
       console.error("Forgot password error:", error);
@@ -517,6 +573,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
 
+      await logUserActivity(userId, "profile_update", { fields: Object.keys(updates) }, req);
       const { password, ...userWithoutPassword } = updatedUser;
       res.json({ success: true, user: userWithoutPassword });
     } catch (error: any) {
@@ -542,6 +599,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
 
+      await logUserActivity(userId, "context_switch", { newContext: context }, req);
       const { password, ...userWithoutPassword } = updatedUser;
       res.json({ success: true, user: userWithoutPassword });
     } catch (error: any) {
@@ -562,6 +620,44 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Get business profile error:", error);
       res.status(500).json({ error: "Failed to fetch business profile", message: error.message });
+    }
+  });
+
+  app.put("/api/users/business-profile", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user || user.accountType !== "business") {
+        return res.status(403).json({ error: "Only business accounts can update business profile" });
+      }
+
+      const validatedData = updateBusinessProfileSchema.parse(req.body);
+      
+      let profile = await storage.getBusinessProfile(userId);
+      
+      if (!profile) {
+        profile = await storage.createBusinessProfile({
+          userId,
+          businessName: validatedData.businessName || "My Business",
+          ...validatedData,
+        });
+      } else {
+        profile = await storage.updateBusinessProfile(userId, validatedData);
+      }
+
+      if (!profile) {
+        return res.status(500).json({ error: "Failed to update business profile" });
+      }
+
+      await logUserActivity(userId, "business_profile_update", { fields: Object.keys(validatedData) }, req);
+      res.json({ success: true, profile });
+    } catch (error: any) {
+      console.error("Update business profile error:", error);
+      res.status(500).json({ error: "Failed to update business profile", message: error.message });
     }
   });
 
@@ -617,6 +713,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
 
+      await logUserActivity(userId, "password_change", undefined, req);
       res.json({ success: true, message: "Password changed successfully" });
     } catch (error: any) {
       console.error("Password change error:", error);
@@ -686,6 +783,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
+      // Get user's active context
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      const context = user.activeContext || "personal";
+
       // Retrieve preview data from server-side cache
       const previewData = ocrPreviewCache.get(userId);
       if (!previewData) {
@@ -730,6 +834,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         category: category || "Other",
         imagePath: previewData.imagePath, // Use server-side stored path
         ocrConfidence: previewData.confidence, // Use original OCR confidence
+        context, // Use user's active context (personal or business)
       };
 
       const validatedData = insertPurchaseSchema.parse(purchaseData);
@@ -738,6 +843,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Clear preview data after successful save
       ocrPreviewCache.delete(userId);
 
+      await logUserActivity(userId, "receipt_upload", { merchant: normalizedMerchant, category: category || "Other" }, req);
+      
       res.json({
         success: true,
         purchase
@@ -785,6 +892,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
         width: 256,
         margin: 2
       });
+
+      await logUserActivity(purchase.userId, "claim_create", { merchant: purchase.merchant }, req);
 
       res.json({
         success: true,
@@ -886,6 +995,116 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ purchase: updated });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update purchase", message: error.message });
+    }
+  });
+
+  app.get("/api/reports/summary", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      const context = user.activeContext;
+      const { startDate, endDate } = req.query;
+      
+      const purchases = await storage.getPurchasesByContext(userId, context);
+      
+      // Filter by date range if provided
+      let filteredPurchases = purchases;
+      if (startDate && typeof startDate === "string") {
+        filteredPurchases = filteredPurchases.filter(p => p.date >= startDate);
+      }
+      if (endDate && typeof endDate === "string") {
+        filteredPurchases = filteredPurchases.filter(p => p.date <= endDate);
+      }
+
+      // Calculate totals
+      let totalSpent = 0;
+      let totalTax = 0;
+      let totalVat = 0;
+      const byCategory: Record<string, { count: number; total: number; tax: number; vat: number }> = {};
+      const byMerchant: Record<string, { count: number; total: number; tax: number; vat: number }> = {};
+      const byMonth: Record<string, { count: number; total: number; tax: number; vat: number }> = {};
+
+      for (const purchase of filteredPurchases) {
+        const amount = parseFloat(purchase.total) || 0;
+        const tax = parseFloat(purchase.taxAmount || "0") || 0;
+        const vat = parseFloat(purchase.vatAmount || "0") || 0;
+        
+        totalSpent += amount;
+        totalTax += tax;
+        totalVat += vat;
+
+        // By category
+        const cat = purchase.category || "Other";
+        if (!byCategory[cat]) {
+          byCategory[cat] = { count: 0, total: 0, tax: 0, vat: 0 };
+        }
+        byCategory[cat].count++;
+        byCategory[cat].total += amount;
+        byCategory[cat].tax += tax;
+        byCategory[cat].vat += vat;
+
+        // By merchant
+        const merchant = purchase.merchant;
+        if (!byMerchant[merchant]) {
+          byMerchant[merchant] = { count: 0, total: 0, tax: 0, vat: 0 };
+        }
+        byMerchant[merchant].count++;
+        byMerchant[merchant].total += amount;
+        byMerchant[merchant].tax += tax;
+        byMerchant[merchant].vat += vat;
+
+        // By month
+        const month = purchase.date.substring(0, 7); // YYYY-MM
+        if (!byMonth[month]) {
+          byMonth[month] = { count: 0, total: 0, tax: 0, vat: 0 };
+        }
+        byMonth[month].count++;
+        byMonth[month].total += amount;
+        byMonth[month].tax += tax;
+        byMonth[month].vat += vat;
+      }
+
+      res.json({
+        summary: {
+          totalReceipts: filteredPurchases.length,
+          totalSpent: totalSpent.toFixed(2),
+          totalTax: totalTax.toFixed(2),
+          totalVat: totalVat.toFixed(2),
+        },
+        byCategory: Object.entries(byCategory).map(([name, data]) => ({
+          name,
+          ...data,
+          total: data.total.toFixed(2),
+          tax: data.tax.toFixed(2),
+          vat: data.vat.toFixed(2),
+        })).sort((a, b) => b.count - a.count),
+        byMerchant: Object.entries(byMerchant).map(([name, data]) => ({
+          name,
+          ...data,
+          total: data.total.toFixed(2),
+          tax: data.tax.toFixed(2),
+          vat: data.vat.toFixed(2),
+        })).sort((a, b) => b.count - a.count),
+        byMonth: Object.entries(byMonth).map(([month, data]) => ({
+          month,
+          ...data,
+          total: data.total.toFixed(2),
+          tax: data.tax.toFixed(2),
+          vat: data.vat.toFixed(2),
+        })).sort((a, b) => a.month.localeCompare(b.month)),
+        context,
+      });
+    } catch (error: any) {
+      console.error("Reports summary error:", error);
+      res.status(500).json({ error: "Failed to generate report", message: error.message });
     }
   });
 
@@ -1069,6 +1288,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("PDF generation error:", error);
       res.status(500).json({ error: "Failed to generate PDF", message: error.message });
+    }
+  });
+
+  // Admin middleware - checks if user is authenticated and has admin role
+  const isAdmin = async (req: Request, res: express.Response, next: express.NextFunction) => {
+    const userId = getCurrentUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    
+    const user = await storage.getUser(userId);
+    if (!user || user.role !== 'admin') {
+      return res.status(403).json({ error: "Forbidden: Admin access required" });
+    }
+    
+    next();
+  };
+
+  // Admin API endpoints
+  app.get("/api/admin/activity", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const userId = req.query.userId as string | undefined;
+      const action = req.query.action as string | undefined;
+
+      const result = await storage.getAllUserActivity(page, limit, userId, action);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Admin activity fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch activity", message: error.message });
+    }
+  });
+
+  app.get("/api/admin/users", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const users = await storage.getAllUsers();
+      // Remove passwords from response
+      const sanitizedUsers = users.map(({ password, ...user }) => user);
+      res.json({ users: sanitizedUsers });
+    } catch (error: any) {
+      console.error("Admin users fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch users", message: error.message });
+    }
+  });
+
+  app.get("/api/admin/stats", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const stats = await storage.getAdminStats();
+      res.json(stats);
+    } catch (error: any) {
+      console.error("Admin stats fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch stats", message: error.message });
+    }
+  });
+
+  app.get("/api/admin/user/:userId/activity", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+
+      const result = await storage.getUserActivity(userId, page, limit);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Admin user activity fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch user activity", message: error.message });
     }
   });
 

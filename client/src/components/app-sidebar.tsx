@@ -1,4 +1,4 @@
-import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw } from "lucide-react";
+import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3 } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -9,6 +9,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarHeader,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
@@ -38,6 +39,12 @@ const menuItems = [
     testId: "nav-claims",
   },
   {
+    title: "Reports",
+    url: "/reports",
+    icon: BarChart3,
+    testId: "nav-reports",
+  },
+  {
     title: "Settings",
     url: "/settings",
     icon: Settings,
@@ -54,15 +61,25 @@ const menuItems = [
 export function AppSidebar() {
   const [location] = useLocation();
   const { toast } = useToast();
+  const { isMobile, setOpenMobile } = useSidebar();
 
   const { data: user } = useQuery<{ 
     id: string; 
     username: string; 
     accountType: string;
     activeContext: string;
+    role?: string;
   } | null>({
     queryKey: ["/api/users/me"],
   });
+
+  const handleMenuItemClick = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
+
+  const isAdmin = user?.role === "admin";
 
   const switchContextMutation = useMutation({
     mutationFn: async (context: string) => {
@@ -142,7 +159,7 @@ export function AppSidebar() {
               {menuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={item.testId}>
+                    <Link href={item.url} data-testid={item.testId} onClick={handleMenuItemClick}>
                       <item.icon className="h-4 w-4" />
                       <span>{item.title}</span>
                     </Link>
@@ -152,6 +169,24 @@ export function AppSidebar() {
             </SidebarMenu>
           </SidebarGroupContent>
         </SidebarGroup>
+
+        {isAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Administration</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin"}>
+                    <Link href="/admin" data-testid="nav-admin" onClick={handleMenuItemClick}>
+                      <Shield className="h-4 w-4" />
+                      <span>Admin Dashboard</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
       </SidebarContent>
     </Sidebar>
   );

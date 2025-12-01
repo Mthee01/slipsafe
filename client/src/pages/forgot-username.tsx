@@ -5,12 +5,15 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
-import { Mail, ArrowLeft, Inbox } from "lucide-react";
+import { Mail, ArrowLeft, Inbox, Phone } from "lucide-react";
 import { Alert, AlertDescription } from "@/components/ui/alert";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import logoUrl from "@assets/SlipSafe Logo_1762888976121.png";
 
 export default function ForgotUsername() {
+  const [recoveryMethod, setRecoveryMethod] = useState<"email" | "phone">("email");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const { toast } = useToast();
@@ -20,10 +23,14 @@ export default function ForgotUsername() {
     setLoading(true);
 
     try {
+      const body = recoveryMethod === "email" 
+        ? { recoveryMethod, email }
+        : { recoveryMethod, phone };
+
       const response = await fetch("/api/auth/forgot-username", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email }),
+        body: JSON.stringify(body),
         credentials: "include",
       });
 
@@ -63,7 +70,7 @@ export default function ForgotUsername() {
           <div className="text-center">
             <CardTitle className="text-2xl">Forgot Username</CardTitle>
             <CardDescription>
-              Enter your email address to recover your username
+              Enter your email address or phone number to recover your username
             </CardDescription>
           </div>
         </CardHeader>
@@ -73,7 +80,9 @@ export default function ForgotUsername() {
               <Alert>
                 <Inbox className="h-4 w-4" />
                 <AlertDescription>
-                  If an account exists with this email, we've sent your username information to your inbox. Please check your email (and spam folder).
+                  {recoveryMethod === "email" 
+                    ? "If an account exists with this email, we've sent your username information to your inbox. Please check your email (and spam folder)."
+                    : "If an account exists with this phone number, we've sent your username via SMS. Please check your messages."}
                 </AlertDescription>
               </Alert>
 
@@ -88,23 +97,56 @@ export default function ForgotUsername() {
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="email">Email Address</Label>
-                <div className="relative">
-                  <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    id="email"
-                    type="email"
-                    placeholder="your.email@example.com"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
-                    autoComplete="email"
-                    className="pl-10"
-                    required
-                    data-testid="input-email"
-                  />
-                </div>
-              </div>
+              <Tabs value={recoveryMethod} onValueChange={(v) => setRecoveryMethod(v as "email" | "phone")}>
+                <TabsList className="grid w-full grid-cols-2">
+                  <TabsTrigger value="email" data-testid="tab-email">
+                    <Mail className="mr-2 h-4 w-4" />
+                    Email
+                  </TabsTrigger>
+                  <TabsTrigger value="phone" data-testid="tab-phone">
+                    <Phone className="mr-2 h-4 w-4" />
+                    Phone
+                  </TabsTrigger>
+                </TabsList>
+                <TabsContent value="email" className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="email">Email Address</Label>
+                    <div className="relative">
+                      <Mail className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="email"
+                        type="email"
+                        placeholder="your.email@example.com"
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        autoComplete="email"
+                        className="pl-10"
+                        required
+                        data-testid="input-email"
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
+                <TabsContent value="phone" className="space-y-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="phone">Phone Number</Label>
+                    <div className="relative">
+                      <Phone className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
+                      <Input
+                        id="phone"
+                        type="tel"
+                        placeholder="+27 82 123 4567"
+                        value={phone}
+                        onChange={(e) => setPhone(e.target.value)}
+                        autoComplete="tel"
+                        className="pl-10"
+                        required
+                        data-testid="input-phone"
+                      />
+                    </div>
+                  </div>
+                </TabsContent>
+              </Tabs>
 
               <Button
                 type="submit"

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -9,20 +9,38 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { useToast } from "@/hooks/use-toast";
-import { User, LogOut, Upload, Lock, Save } from "lucide-react";
+import { User, LogOut, Upload, Lock, Save, Building2 } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
-import type { UpdateUserProfile, ChangePassword } from "@shared/schema";
+import type { UpdateUserProfile, ChangePassword, BusinessProfile, UpdateBusinessProfile } from "@shared/schema";
 
 export default function Profile() {
   const { user, logout, isLoggingOut } = useAuth();
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
+  const isBusiness = (user as any)?.accountType === "business";
+
   const [profileData, setProfileData] = useState<UpdateUserProfile>({
     email: "",
     phone: "",
     homeAddress: "",
     idNumber: "",
+  });
+
+  const [businessData, setBusinessData] = useState<UpdateBusinessProfile>({
+    businessName: "",
+    taxId: "",
+    vatNumber: "",
+    registrationNumber: "",
+    address: "",
+    phone: "",
+    email: "",
+    invoicePrefix: "INV",
+  });
+
+  const { data: businessProfileData, isLoading: isLoadingBusinessProfile } = useQuery<{ profile: BusinessProfile | null }>({
+    queryKey: ["/api/users/business-profile"],
+    enabled: isBusiness,
   });
 
   useEffect(() => {
@@ -35,6 +53,22 @@ export default function Profile() {
       });
     }
   }, [user]);
+
+  useEffect(() => {
+    if (businessProfileData?.profile) {
+      const bp = businessProfileData.profile;
+      setBusinessData({
+        businessName: bp.businessName || "",
+        taxId: bp.taxId || "",
+        vatNumber: bp.vatNumber || "",
+        registrationNumber: bp.registrationNumber || "",
+        address: bp.address || "",
+        phone: bp.phone || "",
+        email: bp.email || "",
+        invoicePrefix: bp.invoicePrefix || "INV",
+      });
+    }
+  }, [businessProfileData]);
 
   const [passwordData, setPasswordData] = useState<ChangePassword>({
     currentPassword: "",
@@ -122,9 +156,34 @@ export default function Profile() {
     },
   });
 
+  const updateBusinessProfileMutation = useMutation({
+    mutationFn: async (data: UpdateBusinessProfile) => {
+      return apiRequest("PUT", "/api/users/business-profile", data);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/users/business-profile"] });
+      toast({
+        title: "Business profile updated",
+        description: "Your business information has been saved successfully",
+      });
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Update failed",
+        description: error.message || "Failed to update business profile",
+        variant: "destructive",
+      });
+    },
+  });
+
   const handleProfileSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     updateProfileMutation.mutate(profileData);
+  };
+
+  const handleBusinessSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    updateBusinessProfileMutation.mutate(businessData);
   };
 
   const handlePasswordSubmit = (e: React.FormEvent) => {
@@ -302,6 +361,146 @@ export default function Profile() {
           </form>
         </CardContent>
       </Card>
+
+      {isBusiness && (
+        <Card>
+          <CardHeader>
+            <div className="flex items-center gap-3">
+              <div className="flex items-center justify-center h-10 w-10 rounded-full bg-primary/10">
+                <Building2 className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <CardTitle>Business Information</CardTitle>
+                <CardDescription>Manage your business details for receipts and invoices</CardDescription>
+              </div>
+            </div>
+          </CardHeader>
+          <CardContent>
+            {isLoadingBusinessProfile ? (
+              <div className="space-y-4">
+                <div className="h-10 bg-muted animate-pulse rounded" />
+                <div className="h-10 bg-muted animate-pulse rounded" />
+                <div className="h-10 bg-muted animate-pulse rounded" />
+              </div>
+            ) : (
+              <form onSubmit={handleBusinessSubmit} className="space-y-4">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="businessName">Business Name *</Label>
+                    <Input
+                      id="businessName"
+                      placeholder="Your Business Name"
+                      value={businessData.businessName || ""}
+                      onChange={(e) => setBusinessData({ ...businessData, businessName: e.target.value })}
+                      autoComplete="organization"
+                      data-testid="input-business-name"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="businessTaxId">Tax ID</Label>
+                    <Input
+                      id="businessTaxId"
+                      placeholder="Tax identification number"
+                      value={businessData.taxId || ""}
+                      onChange={(e) => setBusinessData({ ...businessData, taxId: e.target.value })}
+                      autoComplete="off"
+                      data-testid="input-business-tax-id"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="businessVatNumber">VAT Number</Label>
+                    <Input
+                      id="businessVatNumber"
+                      placeholder="VAT registration number"
+                      value={businessData.vatNumber || ""}
+                      onChange={(e) => setBusinessData({ ...businessData, vatNumber: e.target.value })}
+                      autoComplete="off"
+                      data-testid="input-business-vat"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="businessRegNumber">Registration Number</Label>
+                    <Input
+                      id="businessRegNumber"
+                      placeholder="Company registration number"
+                      value={businessData.registrationNumber || ""}
+                      onChange={(e) => setBusinessData({ ...businessData, registrationNumber: e.target.value })}
+                      autoComplete="off"
+                      data-testid="input-business-reg"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="businessPhone">Business Phone</Label>
+                    <Input
+                      id="businessPhone"
+                      type="tel"
+                      placeholder="Business phone number"
+                      value={businessData.phone || ""}
+                      onChange={(e) => setBusinessData({ ...businessData, phone: e.target.value })}
+                      autoComplete="tel"
+                      data-testid="input-business-phone"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="businessEmail">Business Email</Label>
+                    <Input
+                      id="businessEmail"
+                      type="email"
+                      placeholder="business@example.com"
+                      value={businessData.email || ""}
+                      onChange={(e) => setBusinessData({ ...businessData, email: e.target.value })}
+                      autoComplete="email"
+                      data-testid="input-business-email"
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="invoicePrefix">Invoice Prefix</Label>
+                    <Input
+                      id="invoicePrefix"
+                      placeholder="INV"
+                      value={businessData.invoicePrefix || "INV"}
+                      onChange={(e) => setBusinessData({ ...businessData, invoicePrefix: e.target.value })}
+                      autoComplete="off"
+                      data-testid="input-invoice-prefix"
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="businessAddress">Business Address</Label>
+                  <Textarea
+                    id="businessAddress"
+                    placeholder="Business street address"
+                    value={businessData.address || ""}
+                    onChange={(e) => setBusinessData({ ...businessData, address: e.target.value })}
+                    autoComplete="street-address"
+                    rows={3}
+                    data-testid="textarea-business-address"
+                  />
+                </div>
+
+                <div className="flex justify-end">
+                  <Button
+                    type="submit"
+                    disabled={updateBusinessProfileMutation.isPending}
+                    data-testid="button-save-business"
+                  >
+                    <Save className="mr-2 h-4 w-4" />
+                    {updateBusinessProfileMutation.isPending ? "Saving..." : "Save Business Info"}
+                  </Button>
+                </div>
+              </form>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       <Card>
         <CardHeader>

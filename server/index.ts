@@ -3,11 +3,50 @@ import session from "express-session";
 import { existsSync, mkdirSync } from "fs";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
-import passport from "./auth";
+import passport, { hashPassword } from "./auth";
+import { storage } from "./storage";
 
 if (!existsSync("uploads")) {
   mkdirSync("uploads", { recursive: true });
   log("Created uploads/ directory");
+}
+
+async function seedAdminUser() {
+  const adminUsername = process.env.ADMIN_USERNAME;
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const adminPhone = process.env.ADMIN_PHONE || "+254700000000";
+
+  if (!adminUsername || !adminPassword) {
+    log("No admin credentials provided in environment variables (ADMIN_USERNAME, ADMIN_PASSWORD)");
+    return;
+  }
+
+  try {
+    const existingAdmin = await storage.getUserByUsername(adminUsername);
+    
+    if (existingAdmin) {
+      if (existingAdmin.role !== "admin") {
+        await storage.updateUserRole(existingAdmin.id, "admin");
+        log(`Updated existing user "${adminUsername}" to admin role`);
+      } else {
+        log(`Admin user "${adminUsername}" already exists`);
+      }
+      return;
+    }
+
+    const hashedPassword = await hashPassword(adminPassword);
+    const adminUser = await storage.createUser({
+      username: adminUsername,
+      password: hashedPassword,
+      phone: adminPhone,
+      accountType: "individual",
+    });
+    
+    await storage.updateUserRole(adminUser.id, "admin");
+    log(`Created admin user "${adminUsername}" successfully`);
+  } catch (error) {
+    console.error("Failed to seed admin user:", error);
+  }
 }
 
 const app = express();
@@ -70,6 +109,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await seedAdminUser();
   const server = await registerRoutes(app);
 
   app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {

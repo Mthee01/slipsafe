@@ -15,6 +15,7 @@ export default function Register() {
   const { register, isRegistering, registerError } = useAuth();
   const [username, setUsername] = useState("");
   const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [accountType, setAccountType] = useState<"individual" | "business">("individual");
@@ -28,6 +29,11 @@ export default function Register() {
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
+
+    if (!phone || phone.length < 10) {
+      setError("Please enter a valid phone number (at least 10 digits)");
+      return;
+    }
 
     if (password !== confirmPassword) {
       setError("Passwords do not match");
@@ -46,7 +52,8 @@ export default function Register() {
 
     register({ 
       username, 
-      email, 
+      email: email || undefined,
+      phone,
       password, 
       accountType,
       idNumber: accountType === "individual" ? idNumber : undefined,
@@ -135,7 +142,21 @@ export default function Register() {
               />
             </div>
             <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
+              <Label htmlFor="phone">Cellphone Number *</Label>
+              <Input
+                id="phone"
+                data-testid="input-phone"
+                type="tel"
+                placeholder="+27 82 123 4567"
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                autoComplete="tel"
+                required
+                disabled={isRegistering}
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="email">Email (Optional)</Label>
               <Input
                 id="email"
                 data-testid="input-email"
@@ -144,7 +165,6 @@ export default function Register() {
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
-                required
                 disabled={isRegistering}
               />
             </div>
