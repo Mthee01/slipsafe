@@ -13,9 +13,10 @@ import {
 } from "@/components/ui/sidebar";
 import { Button } from "@/components/ui/button";
 import { Link, useLocation } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useMutation } from "@tanstack/react-query";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
@@ -62,16 +63,7 @@ export function AppSidebar() {
   const [location] = useLocation();
   const { toast } = useToast();
   const { isMobile, setOpenMobile } = useSidebar();
-
-  const { data: user } = useQuery<{ 
-    id: string; 
-    username: string; 
-    accountType: string;
-    activeContext: string;
-    role?: string;
-  } | null>({
-    queryKey: ["/api/users/me"],
-  });
+  const { user } = useAuth();
 
   const handleMenuItemClick = () => {
     if (isMobile) {
@@ -122,21 +114,27 @@ export function AppSidebar() {
 
       {isBusiness && (
         <div className="border-b p-3 bg-muted/30">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-2 text-sm font-medium">
-              {isBusinessContext ? (
-                <>
-                  <Building2 className="h-4 w-4 text-primary" />
-                  <span>Business Mode</span>
-                </>
-              ) : (
-                <>
-                  <UserCircle className="h-4 w-4 text-primary" />
-                  <span>Personal Mode</span>
-                </>
-              )}
+          {isBusinessContext ? (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <Building2 className="h-5 w-5 text-primary" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Business</span>
+              </div>
+              <p className="text-base font-semibold text-foreground pl-7" data-testid="text-business-name">
+                {user?.businessName || "My Business"}
+              </p>
             </div>
-          </div>
+          ) : (
+            <div className="mb-3">
+              <div className="flex items-center gap-2 mb-1">
+                <UserCircle className="h-5 w-5 text-primary" />
+                <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Personal</span>
+              </div>
+              <p className="text-base font-semibold text-foreground pl-7" data-testid="text-personal-name">
+                {user?.fullName || user?.username || "Personal Account"}
+              </p>
+            </div>
+          )}
           <Button
             variant="outline"
             size="sm"

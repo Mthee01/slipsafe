@@ -1,0 +1,197 @@
+ou are a senior backend engineer. Extend the SlipSafe server to support Level-1 (daily batch) integration with retailers: ingest a nightly CSV from SFTP (or HTTP upload), validate, hash, and store a Receipt Registry used for electronic verification.
+
+Goals
+
+Accept daily CSV files of transactions per retailer.
+
+Ingest via SFTP pull (preferred) and HTTP upload (fallback admin endpoint).
+
+Validate rows, canonicalise fields, hash a matching key, and upsert into receipt_registry.
+
+Provide an internal verification API that matches a claim (merchant/date/total/etc.) against the registry.
+
+Include a scheduled job endpoint that can be called by an external cron to pull/process the latest file(s).
+
+Ship with tests, sample CSV, and a README.
+
+Tech/Constraints
+
+Node 18+, Express, ES modules.
+
+Use a minimal SFTP client (e.g., ssh2-sftp-client) and CSV parser (csv-parse or fast-csv).
+
+No DB migrations framework—just SQL in /server/db/schema.sql (Postgres/Supabase).
+
+Logging with console + simple rotating file logs if easy.
+
+Environment Variables (add to /server/.env.example)
+# Registry
+REGISTRY_BATCH_TIME=02:00          # local time the retailer drops files
+REGISTRY_TIMEZONE=Africa/Johannesburg
+
+# SFTP (retailer-specific; we’ll support multiple profiles)
+SFTP_HOST=
+SFTP_PORT=22
+SFTP_USER=
+SFTP_PASSWORD=                      # or SFTP_PRIVATE_KEY, SFTP_PASSPHRASE
+SFTP_REMOTE_DIR=/exports/slipsafe   # e.g., /exports/yyyy-mm-dd/
+SFTP_FILE_GLOB=*.csv                # allow wildcard
+
+# Security
+INGEST_HMAC_SECRET=change_me        # for /api/retailers/:id/upload
+
+# Supabase (already used)
+SUPABASE_URL=
+SUPABASE_ANON_KEY=
+
+Data Model
+
+Extend /server/db/schema.sql with:
+
+-- Retailers (optional lookup)
+create table if not exists retailers (
+  id bigserial primary key,
+  retailer_code text unique not null,  -- e.g., "MRPZA"
+  name text,
+  created_at timestamptz default now()
+);
+
+-- Receipt Registry (daily batch)
+create table if not exists receipt_registry (
+  id bigserial primary key,
+  retailer_code text not null,
+  store_id text not null,
+  terminal_id text,
+  txn_id text,
+  txn_timestamp timestamptz not null,
+  total numeric not null,
+  currency text default 'ZAR',
+  vat numeric,
+  tender text,                 -- CARD/CASH/etc
+  masked_pan text,             -- **** **** **** 1234 (optional)
+  auth_code text,              -- optional
+  loyalty_hash text,           -- sha256(loyalty_id + salt)
+  msisdn_hash text,            -- sha256(msisdn + salt)
+  items_json jsonb,            -- optional line items
+  match_hash text not null,    -- sha256(retailer_code|store_id|terminal_id|txn_id|txn_timestamp|total)
+  source_file text,            -- sftp path or upload id
+  ingested_at timestamptz default now(),
+  unique (retailer_code, store_id, terminal_id, txn_id, txn_timestamp, total)
+);
+
+-- Simple index to speed lookups
+create index if not exists idx_registry_match_hash on receipt_registry (match_hash);
+create index if not exists idx_registry_retailer_time on receipt_registry (retailer_code, txn_timestamp);
+
+CSV Contract (robust parser)
+
+Support header fields (case-insensitive; extra columns ignored):
+
+retailer_code,store_id,terminal_id,txn_id,txn_timestamp,total,vat,currency,tender,masked_pan,auth_code,loyalty_id,msisdn,items_json
+
+
+txn_timestamp = ISO 8601 or YYYY-MM-DD HH:mm:ss in retailer local time (convert to UTC using REGISTRY_TIMEZONE).
+
+If items_json is present, parse JSON; otherwise allow blank.
+
+For hashes: use sha256(value + retailer_code_salt) for loyalty/msisdn; salt can be a constant derived from INGEST_HMAC_SECRET.
+
+File Layout (server)
+/server
+  /routes/retailer_ingest.js     # HTTP upload (fallback) + verify endpoints
+  /lib/sftp.js                   # SFTP pull using ssh2-sftp-client
+  /lib/csv_ingest.js             # parse/validate/upsert; build match_hash
+  /lib/verify_registry.js        # matching logic for claims
+  /tasks/batch_ingest.js         # orchestrator to pull & ingest latest files
+  /samples/retailer_sample.csv
+  /tests/registry.test.js
+
+Endpoints
+
+Admin HTTP Upload (fallback)
+
+POST /api/retailers/:retailerCode/upload
+Headers:
+  X-SlipSafe-TS: <unix_ms>
+  X-SlipSafe-Signature: <HMAC-SHA256(body + TS, INGEST_HMAC_SECRET)>
+Body: multipart/form-data { file: <csv> }
+
+
+Return: {ok:true, rows_ingested, file_id}
+Reject if signature invalid or file too large.
+
+Batch Ingest Trigger (for external cron)
+
+POST /api/tasks/ingest
+Body: { retailerCode?: string }   # if omitted, run for all configured retailers
+
+
+Pull from SFTP using SFTP_* env + SFTP_FILE_GLOB.
+
+For each new CSV, ingest rows; mark processed filenames (store in a small table or a JSON file /data/ingested.json).
+
+Return summary {ok:true, files_processed, rows_ingested}.
+
+Verification (internal use by existing claim flow)
+
+POST /api/registry/verify
+Body: {
+  retailer_code, store_id, terminal_id, txn_id,
+  txn_timestamp, total, currency,
+  masked_pan_tail?, auth_code?, loyalty_hash?, msisdn_hash?
+}
+
+
+Compute a confidence score:
+
+Exact match on match_hash → 1.0
+
+Else: same retailer_code, store_id, total within ±0.05, timestamp within ±10 min → 0.8
+
++0.05 if auth_code matches; +0.05 if PAN tail or loyalty/msisdn hash matches (cap 1.0).
+
+Response:
+
+{ "status":"MATCH|REVIEW|NO_MATCH", "confidence":0.0-1.0, "receipt":{...minimal fields...} }
+
+Implementation Details
+
+csv_ingest.js
+
+Stream parse CSV; validate required fields; normalise timestamp with luxon or dayjs TZ plugin.
+
+Build match_hash = sha256(retailer_code|store_id|terminal_id|txn_id|txn_timestamp_iso|total_fixed2).
+
+Upsert rows (on unique constraint conflict, update ingested_at, source_file).
+
+Collect errors; write a .errors.json next to the file path for troubleshooting.
+
+sftp.js
+
+Connect using envs; list SFTP_REMOTE_DIR (allow date subfolders).
+
+Download only files not yet processed (track by filename hash).
+
+Return local temp file paths to csv_ingest.
+
+batch_ingest.js
+
+For each configured retailer, call SFTP pull → ingest → write summary.
+
+Expose as a function and mount in /api/tasks/ingest.
+
+Security
+
+For upload endpoint, validate HMAC (body + timestamp) and reject if abs(now - ts) > 5 minutes.
+
+Don’t store raw loyalty or msisdn; store only hashes with salt.
+
+Log counts, not PII.
+
+Testing
+
+/tests/registry.test.js covering: csv parsing, hash construction, upsert, and verify scoring.
+
+Sample CSV
+
+Put one at /samples/retailer_sample.csv with 5 rows (card + cash, with/without items_json).

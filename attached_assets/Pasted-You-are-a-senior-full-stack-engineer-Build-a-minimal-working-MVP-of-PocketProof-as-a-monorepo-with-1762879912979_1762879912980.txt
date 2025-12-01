@@ -1,0 +1,217 @@
+You are a senior full-stack engineer. Build a minimal, working MVP of PocketProof as a monorepo with two apps:
+
+/server — Node/Express API (OCR → parse → deadlines; claim QR/PIN + verifier page; USSD webhook; Supabase CRUD).
+
+/app — Next.js (PWA-ready) client with a simple UI: upload receipt → parse → see return/warranty deadlines → generate claim (QR link + PIN) → open verifier page.
+
+Use clean, commented code and create everything needed for a fresh run on Replit.
+
+Functional Requirements
+
+Receipt OCR & Parsing
+
+Endpoint: POST /api/receipts/upload (multipart form image).
+
+Use tesseract.js. Extract at minimum: merchant, date, total.
+
+Implement a light parser (regex/heuristics) and fallback confirmation if a field is missing.
+
+Compute deadlines with rules: default return window = 30 days, default warranty = 12 months (configurable later).
+
+Store & Retrieve Purchases (Supabase)
+
+Persist: id, hash, merchant, date, total, returnBy, warrantyEnds, created_at.
+
+hash = sha256(merchant|date|total).
+
+Provide helpers to insert and getByHash via Supabase REST.
+
+Include /server/db/schema.sql. Leave RLS policies commented with TODOs.
+
+Claims (QR + PIN + Verifier)
+
+Endpoint: POST /api/claims/create (body: {hash}) → returns {qrUrl, token, pin}.
+
+Token: JWT signed with JWT_SECRET, exp 90d, payload {merchant,date,total,hash}.
+
+PIN: 6 digits, random.
+
+Verifier page: GET /claim/:token → server-rendered HTML that shows MATCH / NO MATCH comparing DB vs token (date/total equality; merchant displayed). Add a one-paragraph staff instruction.
+
+USSD v1 (Aggregator Webhook)
+
+Endpoint: POST /api/ussd that returns plain text screens.
+
+Root menu:
+
+PocketProof
+1) Check return window
+2) Get claim code
+3) Warranty status
+4) Help
+
+
+For MVP, mock responses but keep code structured to read by msisdn later. Include TODOs for real DB lookups.
+
+Client App (Next.js)
+
+Page with:
+
+Input to set Server URL (persist in localStorage).
+
+File picker to upload receipt → call /api/receipts/upload.
+
+Show parsed JSON and computed deadlines.
+
+Button “Create Claim” → call /api/claims/create → display verifier URL + PIN; link opens new tab.
+
+PWA Readiness
+
+Add basic Next.js PWA scaffolding (manifest and meta tags). No service worker complexity needed.
+
+Project Hygiene
+
+Add README.md with quick-start for Replit, environment variables, and deployment tips.
+
+Add .env.example for /server.
+
+Add package.json scripts:
+
+server: dev (nodemon), start
+
+app: dev, build, start
+
+Keep code commented and modular (lib folders).
+
+Tech Choices
+
+Backend: Node 18+, Express, multer, tesseract.js, jsonwebtoken, qrcode (if needed later), dayjs.
+
+Frontend: Next.js 14+, React 18.
+
+DB: Supabase (REST via fetch).
+
+No TypeScript required, JS is fine. Use ES modules on the server.
+
+File/Folder Plan
+/README.md
+/server
+  /package.json
+  /.env.example
+  /index.js
+  /routes
+    receipts.js
+    claims.js
+    ussd.js
+  /lib
+    db.js        # Supabase REST helpers
+    ocr.js       # Tesseract + parse helpers
+    rules.js     # return/warranty defaults
+    tokens.js    # JWT + hash + PIN
+    utils.js     # isClose, etc.
+  /db/schema.sql
+/app
+  /package.json
+  /next.config.js
+  /public/manifest.json
+  /pages/index.jsx
+
+Environment Variables (server/.env)
+PORT=3001
+JWT_SECRET=replace_me_with_strong_secret
+SUPABASE_URL=your_supabase_url
+SUPABASE_ANON_KEY=your_supabase_anon_key
+
+
+(Keep optional placeholders and TODO comments for hosted OCR fallback keys.)
+
+Implementation Steps
+
+Create the monorepo folders and files exactly as in the plan.
+
+Implement /server/index.js with Express, CORS, JSON parser, static, and route mounts.
+
+Implement /server/lib/* helpers.
+
+Implement routes:
+
+POST /api/receipts/upload → OCR → parse → compute deadlines → hash → persist → return {parsed, deadlines, hash, id}.
+
+POST /api/claims/create → sign token → generate PIN → return {qrUrl, token, pin} using the current host.
+
+GET /claim/:token → render HTML verifier page with MATCH/NO MATCH.
+
+POST /api/ussd → simple state machine returning text responses.
+
+Implement /app/pages/index.jsx with:
+
+Server URL input (uses localStorage).
+
+Upload control and “Parse” button.
+
+JSON preview of result.
+
+“Create Claim” and show {verifier URL, PIN}.
+
+Add /server/db/schema.sql table for purchases.
+
+Write a README.md with quick start commands for both apps and Supabase setup instructions.
+
+Run both apps locally on Replit:
+
+Server on port 3001 with npm run dev
+
+App on port 3000 with npm run dev
+
+Test flows end-to-end with a sample receipt image.
+
+Acceptance Criteria (must pass)
+
+GET /health returns {ok: true}.
+
+Uploading a receipt image returns merchant, date, total (if unknown, still return with null + TODO flags) plus returnBy and warrantyEnds.
+
+Creating a claim returns a token URL that opens a verifier page.
+
+Verifier page shows MATCH when DB fields equal token fields (date and total); otherwise NO MATCH.
+
+USSD endpoint responds with the menu text and at least one working branch.
+
+Next.js page can parse a receipt and generate a claim without code edits (only server URL input).
+
+Developer Notes / TODOs in Code
+
+Add RLS and per-user ownership in Supabase later.
+
+Add OCR fallback (Mindee/Veryfi/DocAI) when confidence is low.
+
+Add image pre-processing client-side (downscale) to speed up Tesseract.
+
+Add WhatsApp share link for verifier URL.
+
+Add Proof Pack PDF generator with pdfkit/puppeteer.
+
+Add return/warranty rules per merchant in rules.js.
+
+After Build: Commands to Run
+
+Server
+
+cd server
+npm i
+cp .env.example .env  # fill in values
+npm run dev
+
+
+App
+
+cd app
+npm i
+npm run dev
+
+
+Supabase
+
+Create project → add purchases table by running /server/db/schema.sql in SQL editor.
+
+Put SUPABASE_URL + SUPABASE_ANON_KEY into /server/.env.
