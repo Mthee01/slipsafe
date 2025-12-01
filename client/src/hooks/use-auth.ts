@@ -5,6 +5,14 @@ import { useLocation } from "wouter";
 interface User {
   id: string;
   username: string;
+  email?: string | null;
+  phone?: string | null;
+  homeAddress?: string | null;
+  idNumber?: string | null;
+  profilePicture?: string | null;
+  accountType?: string;
+  activeContext?: string;
+  role?: string;
 }
 
 interface AuthResponse {
@@ -53,7 +61,8 @@ export function useAuth() {
 
   const registerMutation = useMutation<AuthResponse, Error, {
     username: string;
-    email: string;
+    email?: string;
+    phone: string;
     password: string;
     accountType: "individual" | "business";
     idNumber?: string;
