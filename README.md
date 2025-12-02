@@ -333,7 +333,7 @@ SlipSafe is a comprehensive receipt management system that transforms physical a
 
 #### Register User
 ```http
-POST /api/register
+POST /api/auth/register
 Content-Type: application/json
 
 {
@@ -353,7 +353,7 @@ Response: 200 OK
 
 #### Verify Email
 ```http
-GET /api/verify-email?token=<verification_token>
+GET /api/auth/verify-email?token=<verification_token>
 
 Response: 200 OK
 {
@@ -363,7 +363,7 @@ Response: 200 OK
 
 #### Login
 ```http
-POST /api/login
+POST /api/auth/login
 Content-Type: application/json
 
 {
@@ -382,7 +382,7 @@ Response: 200 OK
 
 #### Logout
 ```http
-POST /api/logout
+POST /api/auth/logout
 
 Response: 200 OK
 { "ok": true }
