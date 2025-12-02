@@ -381,6 +381,7 @@ export interface ReceiptPDFData {
   warrantyEnds: string | null;
   imageUrl?: string;
   qrCodeDataUrl?: string;
+  logoPath?: string;
 }
 
 export function generateReceiptPDF(data: ReceiptPDFData): PDFKit.PDFDocument {
@@ -394,9 +395,22 @@ export function generateReceiptPDF(data: ReceiptPDFData): PDFKit.PDFDocument {
     }
   });
 
-  const { merchant, date, total, returnBy, warrantyEnds, imageUrl, qrCodeDataUrl } = data;
+  const { merchant, date, total, returnBy, warrantyEnds, imageUrl, qrCodeDataUrl, logoPath } = data;
   
-  // Header with SlipSafe branding
+  // Header with SlipSafe branding and logo
+  const pageWidth = doc.page.width - 100;
+  const centerX = doc.page.width / 2;
+  
+  // Add logo if available
+  if (logoPath) {
+    try {
+      doc.image(logoPath, centerX - 30, doc.y, { width: 60, height: 60 });
+      doc.y += 70;
+    } catch (err) {
+      console.error('Failed to load logo for PDF:', err);
+    }
+  }
+  
   doc.fontSize(24)
      .fillColor('#4f46e5')
      .text('SlipSafe', { align: 'center' });

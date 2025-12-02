@@ -1,6 +1,7 @@
 /**
  * OCR and receipt parsing helpers
- * Uses Tesseract.js to extract text from receipt images
+ * Uses Gemini Vision AI as primary OCR for best accuracy
+ * Falls back to Tesseract.js if Gemini is unavailable
  * Also handles email receipt text parsing
  * Includes Sharp-based image preprocessing for improved OCR accuracy
  */
@@ -9,6 +10,7 @@ import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
+import { performGeminiOCR, isGeminiAvailable } from './gemini-ocr';
 
 /**
  * Preprocess image for better OCR accuracy
@@ -32,28 +34,27 @@ async function preprocessImage(imagePath: string): Promise<string> {
       .rotate() // Auto-rotate based on EXIF
       .grayscale();
     
-    // Step 2: Scale up small images for better OCR (receipts from phones are often low-res)
-    if (metadata.width && metadata.width < 2000) {
-      const scale = Math.min(2.5, 2000 / metadata.width);
+    // Step 2: Scale up images for better OCR (larger text = better recognition)
+    // Scale more aggressively - up to 3x for small images
+    if (metadata.width && metadata.width < 3000) {
+      const scale = Math.min(3.0, 3000 / metadata.width);
       pipeline = pipeline.resize({
         width: Math.round(metadata.width * scale),
         kernel: 'lanczos3',
         withoutEnlargement: false
       });
+      console.log(`[OCR] Scaling image from ${metadata.width}px to ${Math.round(metadata.width * scale)}px (${scale.toFixed(2)}x)`);
     }
     
     // Step 3: Normalize brightness/contrast to handle varying lighting
     pipeline = pipeline.normalize();
     
-    // Step 4: Apply adaptive thresholding for binarization (black text on white background)
-    // This is crucial for receipt paper which often has low contrast thermal printing
-    pipeline = pipeline
-      .threshold(140) // Convert to pure black/white - good for thermal receipts
-      .negate() // Invert if needed
-      .negate(); // Invert back (this cleans up artifacts)
+    // Step 4: Light contrast enhancement (no aggressive thresholding - it destroys text)
+    // Just enhance contrast slightly to make text stand out
+    pipeline = pipeline.linear(1.2, -20); // Slight contrast boost
     
     // Step 5: Light sharpening to make text edges clearer
-    pipeline = pipeline.sharpen({ sigma: 0.5 });
+    pipeline = pipeline.sharpen({ sigma: 0.3 });
     
     await pipeline.toFile(processedPath);
     
@@ -526,7 +527,9 @@ export async function performOCR(imagePath: string): Promise<OCRResult> {
       };
     }
     
-    if (confidence < 25) {
+    // Only reject extremely low quality images (10% threshold)
+    // Most legitimate receipts should pass this, even with poor lighting
+    if (confidence < 10) {
       return {
         text,
         confidence,
@@ -587,13 +590,13 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
   };
 
   // Enhanced merchant detection
-  // Priority order: company names with suffixes, store names with &, first significant uppercase line
-  // Important: Filter out product codes (like RF-POOLKITEPGO50-2), addresses, and policy text
+  // Priority order: business keywords first, then company suffixes, then other patterns
+  // Important: Filter out OCR noise, product codes, addresses, and policy text
   
   const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
   
-  // Look for company names in the first 10 lines of the receipt (header area)
-  const headerLines = lines.slice(0, 10);
+  // Look for company names in the first 15 lines of the receipt (header area)
+  const headerLines = lines.slice(0, 15);
   
   // Pattern to identify product codes and SKUs (should be filtered out)
   const productCodePattern = /^[A-Z]{1,3}[-]?[A-Z0-9]{5,}/;
@@ -616,83 +619,158 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
     // Should have mostly letters (not numbers or special chars)
     const letterCount = (cleanLine.match(/[a-zA-Z]/g) || []).length;
     if (letterCount < cleanLine.length * 0.5) return false;
+    // Filter out OCR noise - lines with too many special characters
+    const specialCharCount = (cleanLine.match(/[|=><\[\]{}()\\\/\"\':;,!@#$%^*~`_+]/g) || []).length;
+    if (specialCharCount > 2) return false;
+    // Filter out lines with repeated punctuation (OCR artifacts)
+    if (/[.]{3,}|[-]{3,}|[_]{3,}/.test(cleanLine)) return false;
     return true;
   };
   
-  // Priority 1: Look for company names with suffixes (CC, PTY, LTD, etc.)
+  // Priority 1 (FIRST!): Look for lines with common business keywords like HARDWARE, STORE, SHOP, etc.
+  // This catches "BRICK PARADISE HARDWARE CC" even if OCR messed up some letters
+  const businessKeywords = /\b(HARDWARE|STORE|SHOP|MARKET|SUPERMARKET|PHARMACY|BAKERY|RESTAURANT|CAFE|GARAGE|MOTORS|AUTO|ELECTRONICS|FURNITURE|CLOTHING|PARADISE|BUILDERS|BUILDING|SUPPLIES|WHOLESALE|RETAIL|CENTRE|CENTER|MALL|PLAZA)\b/i;
   for (const line of headerLines) {
-    const match = line.match(/^([A-Z][A-Za-z0-9\s&'.-]+(?:\s+(?:CC|PTY|LTD|INC|LLC|PLC|CO|CORP|LIMITED|INCORPORATED))\.?)/i);
-    if (match && match[1] && isValidStoreName(match[1])) {
-      result.merchant = match[1].trim();
+    if (businessKeywords.test(line) && isValidStoreName(line) && line.length >= 8) {
+      // Clean up OCR artifacts: remove extra spaces, trailing pipes, etc.
+      let cleanedMerchant = line.replace(/\s+/g, ' ').replace(/[|\\\/]+$/g, '').trim();
+      // If line ends with CC, PTY, LTD, etc., use up to that point
+      const suffixMatch = cleanedMerchant.match(/^(.+?\s+(?:CC|PTY|LTD|INC|LLC|PLC|CO|CORP|LIMITED|INCORPORATED|Cl))\b/i);
+      if (suffixMatch) {
+        cleanedMerchant = suffixMatch[1];
+      }
+      result.merchant = cleanedMerchant.trim();
+      console.log(`[OCR] Found merchant with business keyword: "${result.merchant}" from line: "${line}"`);
       break;
     }
   }
   
-  // Priority 2: Look for all-caps lines with & in them (e.g., "BRICK PARADISE & HARDWARE")
+  // Priority 2: Look for company names with suffixes (CC, PTY, LTD, etc.)
   if (!result.merchant) {
     for (const line of headerLines) {
-      if (line.includes('&') && /^[A-Z\s&]+$/.test(line) && line.length >= 10 && isValidStoreName(line)) {
-        result.merchant = line.trim();
+      const match = line.match(/^([A-Z][A-Za-z0-9\s&'.-]+(?:\s+(?:CC|PTY|LTD|INC|LLC|PLC|CO|CORP|LIMITED|INCORPORATED))\.?)/i);
+      if (match && match[1] && isValidStoreName(match[1])) {
+        result.merchant = match[1].trim();
+        console.log(`[OCR] Found merchant with company suffix: "${result.merchant}"`);
         break;
       }
     }
   }
   
-  // Priority 3: Look for all-caps store names (common on receipts)
+  // Priority 3: Look for all-caps lines with & in them (e.g., "BRICK PARADISE & HARDWARE")
+  if (!result.merchant) {
+    for (const line of headerLines) {
+      if (line.includes('&') && /^[A-Z\s&]+$/.test(line) && line.length >= 10 && isValidStoreName(line)) {
+        result.merchant = line.trim();
+        console.log(`[OCR] Found merchant with &: "${result.merchant}"`);
+        break;
+      }
+    }
+  }
+  
+  // Priority 4: Look for all-caps store names (common on receipts)
   if (!result.merchant) {
     for (const line of headerLines) {
       // All caps, at least 8 chars, mostly letters
       if (/^[A-Z][A-Z\s&'.-]{7,}$/.test(line) && isValidStoreName(line)) {
         result.merchant = line.trim();
+        console.log(`[OCR] Found merchant (all caps): "${result.merchant}"`);
         break;
       }
     }
   }
   
-  // Priority 4: First significant line that looks like a store name
+  // Priority 5: First significant line that looks like a store name
   if (!result.merchant) {
     for (const line of headerLines) {
       if (isValidStoreName(line) && line.length >= 8) {
         result.merchant = line.trim();
+        console.log(`[OCR] Found merchant (first valid line): "${result.merchant}"`);
         break;
       }
     }
   }
 
-  // Invoice/Receipt number extraction
-  const invoicePatterns = [
-    // Invoice #IN57937966 - alphanumeric invoice numbers with prefix (5+ digits)
-    /(?:invoice|inv)[\s#:\-]*([A-Z]{1,5}\d{5,15})/i,
-    // Invoice #12345, INV-12345 - numeric only (5+ digits)
-    /(?:invoice|inv)[\s#:\-]*(\d{5,15})/i,
-    // Receipt No. 12345, Receipt #12345
-    /(?:receipt|rcpt)[\s#:\-.no]*([A-Z]{0,3}\d{5,15})/i,
-    // Tax Invoice: 12345
-    /(?:tax\s+invoice)[\s#:\-]*([A-Z]{0,3}\d{5,15})/i,
-    // Order #12345, Order No. 12345
-    /(?:order)[\s#:\-.no]*([A-Z]{0,3}\d{5,15})/i,
-    // Transaction ID: 12345
-    /(?:transaction|trans|txn)[\s#:\-.id]*([A-Z]{0,3}\d{5,15})/i,
-    // Reference: 12345, Ref #12345
-    /(?:reference|ref)[\s#:\-]*([A-Z]{0,3}\d{5,15})/i,
-    // TM: 7 TX: 35933 (South African format)
-    /\bTX[\s:]*(\d{4,10})\b/i,
-    // Doc No: 12345
-    /(?:doc|document)[\s#:\-.no]*([A-Z]{0,3}\d{5,15})/i,
-  ];
+  // Invoice/Receipt number extraction - LINE-BASED approach
+  // User feedback: Look for "inv", "invoice" keywords and extract number from the SAME LINE
+  const allLines = text.split(/\n/);
+  
+  // First pass: Find lines containing invoice/inv keyword and extract number from same line
+  for (const line of allLines) {
+    const lowerLine = line.toLowerCase();
+    
+    // Check if line contains invoice keyword
+    if (lowerLine.includes('invoice') || lowerLine.includes('inv ') || lowerLine.includes('inv:') || lowerLine.includes('inv#')) {
+      // Extract alphanumeric invoice number from this line
+      // Handle formats like: #IN57937966, IN57937966, INV-12345, #INS 7937966 (with space), 12345678
+      
+      // Try 1: Alphanumeric with optional space between prefix and number
+      // Example: "#INS 7937966" -> "INS7937966" or "#IN57937966" -> "IN57937966"
+      let invoiceMatch = line.match(/[#]?([A-Z]{1,5})\s*(\d{5,15})/i);
+      if (invoiceMatch && invoiceMatch[1] && invoiceMatch[2]) {
+        const invoiceNum = (invoiceMatch[1] + invoiceMatch[2]).trim();
+        if (invoiceNum.length >= 5 && invoiceNum.length <= 20) {
+          if (!/^0\d{9,}$/.test(invoiceNum) && !/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(invoiceNum)) {
+            result.invoiceNumber = invoiceNum;
+            console.log(`[OCR] Found invoice number (prefix+number): ${invoiceNum} from line: "${line}"`);
+            break;
+          }
+        }
+      }
+      
+      // Try 2: Just numeric (if no prefix found)
+      if (!result.invoiceNumber) {
+        invoiceMatch = line.match(/\b(\d{6,15})\b/);
+        if (invoiceMatch && invoiceMatch[1]) {
+          const invoiceNum = invoiceMatch[1].trim();
+          if (invoiceNum.length >= 6 && invoiceNum.length <= 20) {
+            if (!/^0\d{9,}$/.test(invoiceNum) && !/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(invoiceNum)) {
+              result.invoiceNumber = invoiceNum;
+              console.log(`[OCR] Found invoice number (numeric only): ${invoiceNum} from line: "${line}"`);
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  // Fallback patterns if line-based search didn't find anything
+  if (!result.invoiceNumber) {
+    const invoicePatterns = [
+      // Invoice #IN57937966 - alphanumeric invoice numbers with prefix (5+ digits)
+      /(?:invoice|inv)[\s#:\-]*([A-Z]{1,5}\d{5,15})/i,
+      // Invoice #12345, INV-12345 - numeric only (5+ digits)
+      /(?:invoice|inv)[\s#:\-]*(\d{5,15})/i,
+      // Receipt No. 12345, Receipt #12345
+      /(?:receipt|rcpt)[\s#:\-.no]*([A-Z]{0,3}\d{5,15})/i,
+      // Tax Invoice: 12345
+      /(?:tax\s+invoice)[\s#:\-]*([A-Z]{0,3}\d{5,15})/i,
+      // Order #12345, Order No. 12345
+      /(?:order)[\s#:\-.no]*([A-Z]{0,3}\d{5,15})/i,
+      // Transaction ID: 12345
+      /(?:transaction|trans|txn)[\s#:\-.id]*([A-Z]{0,3}\d{5,15})/i,
+      // Reference: 12345, Ref #12345
+      /(?:reference|ref)[\s#:\-]*([A-Z]{0,3}\d{5,15})/i,
+      // TM: 7 TX: 35933 (South African format)
+      /\bTX[\s:]*(\d{4,10})\b/i,
+      // Doc No: 12345
+      /(?:doc|document)[\s#:\-.no]*([A-Z]{0,3}\d{5,15})/i,
+    ];
 
-  for (const pattern of invoicePatterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      const invoiceNum = match[1].trim();
-      // Validate: should be at least 5 chars and not look like a phone number or date
-      if (invoiceNum.length >= 5 && invoiceNum.length <= 20) {
-        // Skip if it looks like a phone number (starts with 0 and has 10+ digits)
-        if (/^0\d{9,}$/.test(invoiceNum)) continue;
-        // Skip if it looks like a date
-        if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(invoiceNum)) continue;
-        result.invoiceNumber = invoiceNum;
-        break;
+    for (const pattern of invoicePatterns) {
+      const match = text.match(pattern);
+      if (match && match[1]) {
+        const invoiceNum = match[1].trim();
+        // Validate: should be at least 5 chars and not look like a phone number or date
+        if (invoiceNum.length >= 5 && invoiceNum.length <= 20) {
+          // Skip if it looks like a phone number (starts with 0 and has 10+ digits)
+          if (/^0\d{9,}$/.test(invoiceNum)) continue;
+          // Skip if it looks like a date
+          if (/^\d{1,2}[\/-]\d{1,2}[\/-]\d{2,4}$/.test(invoiceNum)) continue;
+          result.invoiceNumber = invoiceNum;
+          break;
+        }
       }
     }
   }
@@ -1086,10 +1164,66 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
 
 /**
  * Full OCR pipeline: perform OCR and parse results
+ * Uses Gemini Vision AI as primary OCR for best accuracy
+ * Falls back to Tesseract if Gemini is unavailable
  * @param imagePath - Path to uploaded image
  * @returns Parsed receipt data
  */
 export async function processReceipt(imagePath: string): Promise<ParsedReceipt> {
+  // Check if Gemini is available before attempting to use it
+  const geminiAvailable = await isGeminiAvailable();
+  
+  if (geminiAvailable) {
+    try {
+      console.log('[OCR] Attempting Gemini Vision AI for receipt scanning...');
+      const geminiResult = await performGeminiOCR(imagePath);
+      
+      // Check if Gemini returned useful data
+      if (geminiResult.merchant || geminiResult.total || geminiResult.date) {
+        console.log('[OCR] Gemini Vision AI successful!');
+        console.log(`[OCR] Gemini extracted: merchant="${geminiResult.merchant}", total=${geminiResult.total}, date="${geminiResult.date}", invoice="${geminiResult.invoiceNumber}"`);
+        
+        // Convert Gemini result to ParsedReceipt format
+        const result: ParsedReceipt = {
+          merchant: geminiResult.merchant,
+          date: geminiResult.date,
+          total: geminiResult.total,
+          subtotal: geminiResult.subtotal,
+          taxAmount: null,
+          vatAmount: geminiResult.vatAmount,
+          vatSource: geminiResult.vatSource,
+          invoiceNumber: geminiResult.invoiceNumber,
+          confidence: geminiResult.confidence,
+          rawText: geminiResult.rawText,
+          ocrConfidence: geminiResult.ocrConfidence,
+          policies: geminiResult.policies,
+          warnings: geminiResult.warnings
+        };
+        
+        // Add TODO flags for any missing fields
+        if (!result.merchant) {
+          result.merchantTODO = 'Manual entry required';
+        }
+        if (!result.date) {
+          result.dateTODO = 'Manual entry required';
+        }
+        if (!result.total) {
+          result.totalTODO = 'Manual entry required';
+        }
+        
+        return result;
+      }
+      
+      console.log('[OCR] Gemini returned no useful data, falling back to Tesseract...');
+    } catch (geminiError: any) {
+      console.log('[OCR] Gemini Vision AI failed:', geminiError.message);
+      console.log('[OCR] Falling back to Tesseract OCR...');
+    }
+  } else {
+    console.log('[OCR] Gemini Vision AI not available, using Tesseract OCR...');
+  }
+  
+  // Fallback to Tesseract OCR
   const ocrResult = await performOCR(imagePath);
   
   // Handle OCR errors

@@ -14,6 +14,7 @@ import { randomBytes } from "crypto";
 import { processReceipt } from "./lib/ocr";
 import { generateReceiptPDF, generateExpenseReportPDF } from "./lib/pdf";
 import { readFile } from "fs/promises";
+import path from "path";
 import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail } from "./lib/email";
 
 async function logUserActivity(
@@ -44,7 +45,7 @@ const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 interface PolicyPreview {
   returnPolicyDays: number | null;
   returnPolicyTerms: string | null;
-  refundType: 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
+  refundType: 'not_specified' | 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
   exchangePolicyDays: number | null;
   exchangePolicyTerms: string | null;
   warrantyMonths: number | null;
@@ -766,6 +767,69 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  app.post("/api/users/upgrade-to-business", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      if (user.accountType === "business") {
+        return res.status(400).json({ error: "Account is already a business account" });
+      }
+
+      const { businessName, taxId, vatNumber, registrationNumber, businessAddress, businessPhone, businessEmail, invoicePrefix } = req.body;
+
+      if (!businessName || businessName.trim() === "") {
+        return res.status(400).json({ error: "Business name is required" });
+      }
+      if (!taxId || taxId.trim() === "") {
+        return res.status(400).json({ error: "Tax ID is required for business accounts" });
+      }
+
+      const businessProfile = await storage.createBusinessProfile({
+        userId,
+        businessName: businessName.trim(),
+        taxId: taxId.trim(),
+        vatNumber: vatNumber?.trim() || null,
+        registrationNumber: registrationNumber?.trim() || null,
+        address: businessAddress?.trim() || null,
+        phone: businessPhone?.trim() || null,
+        email: businessEmail?.trim() || null,
+        invoicePrefix: invoicePrefix?.trim() || "INV",
+      });
+
+      const updatedUser = await storage.updateAccountType(userId, "business");
+      if (!updatedUser) {
+        return res.status(500).json({ error: "Failed to update account type" });
+      }
+
+      // Automatically switch to business context after upgrade
+      const userWithBusinessContext = await storage.updateUserContext(userId, "business");
+
+      await logUserActivity(userId, "business_profile_update", { action: "upgrade_to_business" }, req);
+      
+      const finalUser = userWithBusinessContext || updatedUser;
+      const { password, ...userWithoutPassword } = finalUser;
+      res.json({ 
+        success: true, 
+        user: {
+          ...userWithoutPassword,
+          businessName: businessProfile.businessName,
+          businessProfile,
+        }
+      });
+    } catch (error: any) {
+      console.error("Upgrade to business error:", error);
+      res.status(500).json({ error: "Failed to upgrade to business account", message: error.message });
+    }
+  });
+
   app.get("/api/users/business-profile", isAuthenticated, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
@@ -911,16 +975,73 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Parse and normalize date to ISO format using enhanced parser
       const isoDate = parseDateToISO(ocrResult.date);
       
-      // Compute deadlines with merchant-specific rules
-      const deadlines = await computeDeadlines(isoDate, userId, merchant || "Unknown");
+      // Compute deadlines from extracted policy values
+      // Fallback to merchant rules if policy allows returns but no days specified
+      const purchaseDate = new Date(isoDate);
+      let returnBy: string | null = null;
+      let warrantyEnds: string | null = null;
+      let returnPolicyDays: number | null = null;
+      let warrantyMonths: number | null = null;
+      let policySource = ocrResult.policies?.policySource || 'extracted';
+      
+      // Check if returns are explicitly disallowed
+      const noReturnsAllowed = ocrResult.policies?.refundType === 'none' || ocrResult.policies?.returnPolicyDays === 0;
+      
+      // Get days from OCR or fall back to merchant rules
+      if (ocrResult.policies) {
+        returnPolicyDays = ocrResult.policies.returnPolicyDays;
+        warrantyMonths = ocrResult.policies.warrantyMonths;
+      }
+      
+      // If OCR didn't extract days but returns are allowed, look up merchant rules
+      if (!noReturnsAllowed && merchant) {
+        const merchantRule = await storage.getMerchantRule(userId, merchant);
+        
+        // Fallback to merchant rules for return days if not extracted from receipt
+        if (returnPolicyDays === null && merchantRule?.returnPolicyDays) {
+          returnPolicyDays = merchantRule.returnPolicyDays;
+          if (ocrResult.policies) {
+            ocrResult.policies.returnPolicyDays = returnPolicyDays;
+            policySource = 'merchant_default';
+          }
+          console.log(`[Preview] Using merchant rule for return days: ${returnPolicyDays} days for "${merchant}"`);
+        }
+        
+        // Fallback to merchant rules for warranty months if not extracted from receipt
+        if (warrantyMonths === null && merchantRule?.warrantyMonths) {
+          warrantyMonths = merchantRule.warrantyMonths;
+          if (ocrResult.policies) {
+            ocrResult.policies.warrantyMonths = warrantyMonths;
+            policySource = 'merchant_default';
+          }
+          console.log(`[Preview] Using merchant rule for warranty: ${warrantyMonths} months for "${merchant}"`);
+        }
+      }
+      
+      // Calculate deadlines based on final policy values
+      if (!noReturnsAllowed && returnPolicyDays && returnPolicyDays > 0) {
+        const returnDate = new Date(purchaseDate);
+        returnDate.setDate(returnDate.getDate() + returnPolicyDays);
+        returnBy = returnDate.toISOString().split('T')[0];
+      }
+      if (warrantyMonths && warrantyMonths > 0) {
+        const warrantyDate = new Date(purchaseDate);
+        warrantyDate.setMonth(warrantyDate.getMonth() + warrantyMonths);
+        warrantyEnds = warrantyDate.toISOString().split('T')[0];
+      }
+      
+      // Update policy source if we used merchant defaults
+      if (ocrResult.policies && policySource === 'merchant_default') {
+        ocrResult.policies.policySource = 'merchant_default';
+      }
 
       // Store preview data server-side for later confirmation
       const previewData: PreviewData = {
         merchant: merchant || "Unknown Merchant",
         date: isoDate,
         total: total || "0.00",
-        returnBy: deadlines.returnBy,
-        warrantyEnds: deadlines.warrantyEnds,
+        returnBy: returnBy || "",
+        warrantyEnds: warrantyEnds || "",
         confidence: ocrResult.confidence,
         rawText: ocrResult.rawText,
         imagePath: req.file.path,
@@ -939,8 +1060,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           merchant,
           date: isoDate,
           total,
-          returnBy: deadlines.returnBy,
-          warrantyEnds: deadlines.warrantyEnds,
+          returnBy,
+          warrantyEnds,
           confidence: ocrResult.confidence,
           rawText: ocrResult.rawText,
           ocrConfidence: ocrResult.ocrConfidence,
@@ -1010,9 +1131,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const hash = generateHash(normalizedMerchant, normalizedDate, normalizedTotal.toString());
-      
-      // Compute deadlines with merchant-specific rules
-      const deadlines = await computeDeadlines(normalizedDate, userId, normalizedMerchant);
 
       // Normalize confidence to string (schema expects "low" | "medium" | "high")
       let confidenceStr: string;
@@ -1028,14 +1146,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get invoiceNumber from request body (user may have edited) or from preview data (extracted)
       const invoiceNumber = req.body.invoiceNumber || previewData.invoiceNumber || null;
 
+      // Compute deadlines from user-edited policy values (product-specific, not merchant defaults)
+      // Only compute if the user provided actual values - no defaults!
+      const purchaseDate = new Date(normalizedDate);
+      let returnBy: string | null = null;
+      let warrantyEnds: string | null = null;
+      
+      // Only calculate return deadline if returns are allowed AND a return policy is specified
+      const noReturnsAllowed = policies.refundType === 'none' || policies.returnPolicyDays === 0;
+      if (!noReturnsAllowed && policies.returnPolicyDays && policies.returnPolicyDays > 0) {
+        const returnDate = new Date(purchaseDate);
+        returnDate.setDate(returnDate.getDate() + policies.returnPolicyDays);
+        returnBy = returnDate.toISOString().split('T')[0];
+      }
+      
+      // Only calculate warranty deadline if warranty months is specified
+      if (policies.warrantyMonths && policies.warrantyMonths > 0) {
+        const warrantyDate = new Date(purchaseDate);
+        warrantyDate.setMonth(warrantyDate.getMonth() + policies.warrantyMonths);
+        warrantyEnds = warrantyDate.toISOString().split('T')[0];
+      }
+
       const purchaseData = {
         userId,
         hash,
         merchant: normalizedMerchant,
         date: normalizedDate,
         total: normalizedTotal.toString(),
-        returnBy: deadlines.returnBy,
-        warrantyEnds: deadlines.warrantyEnds,
+        returnBy,
+        warrantyEnds,
         category: category || "Other",
         imagePath: previewData.imagePath,
         ocrConfidence: confidenceStr,
@@ -1096,8 +1235,50 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
 
+      // Try Gemini AI first for better accuracy (especially for business users)
+      const { parseEmailWithGemini, isGeminiAvailable } = await import('./lib/gemini-ocr');
       const { parseEmailReceiptText } = await import('./lib/ocr');
-      const parseResult = parseEmailReceiptText(text);
+      
+      let parseResult;
+      const geminiAvailable = await isGeminiAvailable();
+      
+      if (geminiAvailable) {
+        try {
+          console.log('[Email Receipt] Using Gemini AI for email parsing...');
+          const geminiResult = await parseEmailWithGemini(text);
+          
+          // Check if Gemini returned useful data
+          if (geminiResult.merchant || geminiResult.total || geminiResult.date) {
+            console.log('[Email Receipt] Gemini AI parsing successful!');
+            parseResult = {
+              merchant: geminiResult.merchant,
+              date: geminiResult.date,
+              total: geminiResult.total,
+              subtotal: geminiResult.subtotal,
+              taxAmount: null,
+              vatAmount: geminiResult.vatAmount,
+              vatSource: geminiResult.vatSource,
+              invoiceNumber: geminiResult.invoiceNumber,
+              confidence: geminiResult.confidence,
+              rawText: geminiResult.rawText,
+              ocrConfidence: geminiResult.ocrConfidence,
+              policies: geminiResult.policies,
+              warnings: geminiResult.warnings,
+              error: null
+            };
+          } else {
+            console.log('[Email Receipt] Gemini returned no useful data, falling back to regex parser...');
+            parseResult = parseEmailReceiptText(text);
+          }
+        } catch (geminiError: any) {
+          console.log('[Email Receipt] Gemini AI failed:', geminiError.message);
+          console.log('[Email Receipt] Falling back to regex parser...');
+          parseResult = parseEmailReceiptText(text);
+        }
+      } else {
+        console.log('[Email Receipt] Gemini AI not available, using regex parser...');
+        parseResult = parseEmailReceiptText(text);
+      }
 
       const merchant = parseResult.merchant?.trim() || null;
       let isoDate: string | null = null;
@@ -1108,17 +1289,74 @@ export async function registerRoutes(app: Express): Promise<Server> {
       
       const total = parseResult.total;
 
-      let deadlines: { returnBy: string | null; warrantyEnds: string | null } = { returnBy: null, warrantyEnds: null };
-      if (isoDate && merchant) {
-        deadlines = await computeDeadlines(isoDate, userId, merchant);
+      // Compute deadlines from extracted policy values
+      // Fallback to merchant rules if policy allows returns but no days specified
+      let returnBy: string | null = null;
+      let warrantyEnds: string | null = null;
+      let returnPolicyDays: number | null = null;
+      let warrantyMonths: number | null = null;
+      let policySource = parseResult.policies?.policySource || 'extracted';
+      
+      // Check if returns are explicitly disallowed
+      const noReturnsAllowed = parseResult.policies?.refundType === 'none' || parseResult.policies?.returnPolicyDays === 0;
+      
+      // Get days from parsing or fall back to merchant rules
+      if (parseResult.policies) {
+        returnPolicyDays = parseResult.policies.returnPolicyDays;
+        warrantyMonths = parseResult.policies.warrantyMonths;
+      }
+      
+      // If parsing didn't extract days but returns are allowed, look up merchant rules
+      if (!noReturnsAllowed && merchant && isoDate) {
+        const merchantRule = await storage.getMerchantRule(userId, merchant);
+        
+        // Fallback to merchant rules for return days if not extracted
+        if (returnPolicyDays === null && merchantRule?.returnPolicyDays) {
+          returnPolicyDays = merchantRule.returnPolicyDays;
+          if (parseResult.policies) {
+            parseResult.policies.returnPolicyDays = returnPolicyDays;
+            policySource = 'merchant_default';
+          }
+          console.log(`[Email Preview] Using merchant rule for return days: ${returnPolicyDays} days for "${merchant}"`);
+        }
+        
+        // Fallback to merchant rules for warranty months if not extracted
+        if (warrantyMonths === null && merchantRule?.warrantyMonths) {
+          warrantyMonths = merchantRule.warrantyMonths;
+          if (parseResult.policies) {
+            parseResult.policies.warrantyMonths = warrantyMonths;
+            policySource = 'merchant_default';
+          }
+          console.log(`[Email Preview] Using merchant rule for warranty: ${warrantyMonths} months for "${merchant}"`);
+        }
+      }
+      
+      // Calculate deadlines based on final policy values
+      if (isoDate) {
+        const purchaseDate = new Date(isoDate);
+        if (!noReturnsAllowed && returnPolicyDays && returnPolicyDays > 0) {
+          const returnDate = new Date(purchaseDate);
+          returnDate.setDate(returnDate.getDate() + returnPolicyDays);
+          returnBy = returnDate.toISOString().split('T')[0];
+        }
+        if (warrantyMonths && warrantyMonths > 0) {
+          const warrantyDate = new Date(purchaseDate);
+          warrantyDate.setMonth(warrantyDate.getMonth() + warrantyMonths);
+          warrantyEnds = warrantyDate.toISOString().split('T')[0];
+        }
+      }
+      
+      // Update policy source if we used merchant defaults
+      if (parseResult.policies && policySource === 'merchant_default') {
+        parseResult.policies.policySource = 'merchant_default';
       }
 
       ocrPreviewCache.set(userId, {
         merchant: merchant || "Unknown Merchant",
         date: isoDate || "",
         total: total?.toString() || "0.00",
-        returnBy: deadlines.returnBy || "",
-        warrantyEnds: deadlines.warrantyEnds || "",
+        returnBy: returnBy || "",
+        warrantyEnds: warrantyEnds || "",
         confidence: parseResult.confidence,
         rawText: text,
         imagePath: null,
@@ -1136,8 +1374,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           merchant,
           date: isoDate,
           total,
-          returnBy: deadlines.returnBy,
-          warrantyEnds: deadlines.warrantyEnds,
+          returnBy,
+          warrantyEnds,
           confidence: parseResult.confidence,
           rawText: parseResult.rawText,
           ocrConfidence: parseResult.ocrConfidence,
@@ -1192,9 +1430,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const policyUpdates = validationResult.data;
       
+      // Recalculate deadlines based on updated policy values
+      const purchaseDate = new Date(purchase.date);
+      let returnBy: string | null = purchase.returnBy;
+      let warrantyEnds: string | null = purchase.warrantyEnds;
+      
+      // Recalculate return deadline if return policy was updated
+      if ('returnPolicyDays' in policyUpdates || 'refundType' in policyUpdates) {
+        const returnDays = policyUpdates.returnPolicyDays ?? purchase.returnPolicyDays;
+        const refundType = policyUpdates.refundType ?? purchase.refundType;
+        const noReturnsAllowed = refundType === 'none' || returnDays === 0;
+        
+        if (noReturnsAllowed) {
+          returnBy = null;
+        } else if (returnDays && returnDays > 0) {
+          const returnDate = new Date(purchaseDate);
+          returnDate.setDate(returnDate.getDate() + returnDays);
+          returnBy = returnDate.toISOString().split('T')[0];
+        } else {
+          returnBy = null;
+        }
+      }
+      
+      // Recalculate warranty deadline if warranty was updated
+      if ('warrantyMonths' in policyUpdates) {
+        const warrantyMonthsVal = policyUpdates.warrantyMonths;
+        if (warrantyMonthsVal && warrantyMonthsVal > 0) {
+          const warrantyDate = new Date(purchaseDate);
+          warrantyDate.setMonth(warrantyDate.getMonth() + warrantyMonthsVal);
+          warrantyEnds = warrantyDate.toISOString().split('T')[0];
+        } else {
+          warrantyEnds = null;
+        }
+      }
+      
       // Mark as user_entered if coming from user edit
       const updates = {
         ...policyUpdates,
+        returnBy: returnBy || undefined,
+        warrantyEnds: warrantyEnds || undefined,
         policySource: 'user_entered' as const,
       };
 
@@ -1359,6 +1633,27 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ purchases });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch purchases", message: error.message });
+    }
+  });
+
+  // Get single purchase by ID
+  app.get("/api/purchases/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const purchase = await storage.getPurchaseById(userId, id);
+
+      if (!purchase) {
+        return res.status(404).json({ error: "Receipt not found" });
+      }
+
+      res.json(purchase);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch purchase", message: error.message });
     }
   });
 
@@ -1889,6 +2184,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Serve receipt image
+  app.get("/api/receipts/image/:id", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const { id } = req.params;
+      const purchase = await storage.getPurchaseById(userId, id);
+
+      if (!purchase) {
+        return res.status(404).json({ error: "Receipt not found" });
+      }
+
+      if (!purchase.imagePath) {
+        return res.status(404).json({ error: "No image for this receipt" });
+      }
+
+      try {
+        const imageBuffer = await readFile(purchase.imagePath);
+        const mimeType = purchase.imagePath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        res.setHeader('Content-Type', mimeType);
+        res.setHeader('Cache-Control', 'private, max-age=3600');
+        res.send(imageBuffer);
+      } catch (err) {
+        console.error('Failed to read receipt image:', err);
+        return res.status(404).json({ error: "Image file not found" });
+      }
+    } catch (error: any) {
+      console.error("Get receipt image error:", error);
+      res.status(500).json({ error: "Failed to get receipt image", message: error.message });
+    }
+  });
+
   app.get("/api/purchases/:id/pdf", isAuthenticated, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
@@ -1925,6 +2255,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         console.error('Failed to generate QR code:', err);
       }
 
+      // Logo path for PDF - use path.join for cross-platform compatibility
+      const logoPath = path.join(process.cwd(), 'attached_assets', 'SlipSafe Logo_1762888976121.png');
+
       // Generate PDF
       const pdfDoc = generateReceiptPDF({
         merchant: purchase.merchant,
@@ -1934,13 +2267,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         warrantyEnds: purchase.warrantyEnds,
         imageUrl: imageDataUrl,
         qrCodeDataUrl: qrCodeDataUrl,
+        logoPath: logoPath,
       });
 
-      // Set response headers
+      // Set response headers - use inline to allow viewing in iframe
       res.setHeader('Content-Type', 'application/pdf');
       res.setHeader(
         'Content-Disposition',
-        `attachment; filename="receipt-${purchase.merchant.replace(/[^a-z0-9]/gi, '-')}-${new Date(purchase.date).toISOString().split('T')[0]}.pdf"`
+        `inline; filename="receipt-${purchase.merchant.replace(/[^a-z0-9]/gi, '-')}-${new Date(purchase.date).toISOString().split('T')[0]}.pdf"`
       );
 
       // Pipe PDF to response
@@ -1952,20 +2286,45 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Admin middleware - checks if user is authenticated and has admin role
-  const isAdmin = async (req: Request, res: express.Response, next: express.NextFunction) => {
+  // Admin middleware - checks if user is authenticated and has admin or support role
+  const isAdminOrSupport = async (req: Request, res: express.Response, next: express.NextFunction) => {
     const userId = getCurrentUserId(req);
     if (!userId) {
       return res.status(401).json({ error: "Unauthorized" });
     }
     
     const user = await storage.getUser(userId);
-    if (!user || user.role !== 'admin') {
-      return res.status(403).json({ error: "Forbidden: Admin access required" });
+    if (!user || (user.role !== 'admin' && user.role !== 'support')) {
+      return res.status(403).json({ error: "Forbidden: Admin or support access required" });
     }
     
+    (req as any).adminUser = user;
     next();
   };
+
+  // Merchant role middleware - checks if user has merchant_admin or merchant_staff role
+  const isMerchantRole = async (req: Request, res: express.Response, next: express.NextFunction) => {
+    const userId = getCurrentUserId(req);
+    if (!userId) {
+      return res.status(401).json({ error: "Unauthorized" });
+    }
+    
+    const user = await storage.getUser(userId);
+    if (!user || (user.role !== 'merchant_admin' && user.role !== 'merchant_staff')) {
+      return res.status(403).json({ error: "Forbidden: Merchant access required" });
+    }
+    
+    if (!user.merchantId) {
+      return res.status(403).json({ error: "Forbidden: No merchant associated with this account" });
+    }
+    
+    (req as any).merchantUser = user;
+    (req as any).merchantId = user.merchantId;
+    next();
+  };
+
+  // Legacy isAdmin for backwards compatibility
+  const isAdmin = isAdminOrSupport;
 
   // Admin API endpoints
   app.get("/api/admin/activity", isAuthenticated, isAdmin, async (req, res) => {
@@ -2019,8 +2378,314 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin endpoint to update user role
+  app.patch("/api/admin/users/:userId/role", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { role, merchantId } = req.body;
+      
+      // Validate role
+      const validRoles = ["user", "admin", "support", "merchant_admin", "merchant_staff"];
+      if (!role || !validRoles.includes(role)) {
+        return res.status(400).json({ error: "Invalid role. Must be one of: " + validRoles.join(", ") });
+      }
+
+      // For merchant roles, merchantId is required
+      if ((role === "merchant_admin" || role === "merchant_staff") && !merchantId) {
+        return res.status(400).json({ error: "Merchant ID is required for merchant roles" });
+      }
+
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+
+      // Update user role
+      const updatedUser = await storage.updateUserRole(userId, role);
+      
+      // If merchant role, also update merchantId
+      if (merchantId && (role === "merchant_admin" || role === "merchant_staff")) {
+        await storage.updateUserMerchantId(userId, merchantId);
+      } else if (role === "user" || role === "admin" || role === "support") {
+        // Clear merchantId for non-merchant roles
+        await storage.updateUserMerchantId(userId, null);
+      }
+
+      if (!updatedUser) {
+        return res.status(500).json({ error: "Failed to update user role" });
+      }
+
+      const finalUser = await storage.getUser(userId);
+      const { password, ...userWithoutPassword } = finalUser!;
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_role_change", { 
+        targetUserId: userId, 
+        newRole: role,
+        merchantId: merchantId || null
+      }, req);
+      
+      res.json({ success: true, user: userWithoutPassword });
+    } catch (error: any) {
+      console.error("Admin role update error:", error);
+      res.status(500).json({ error: "Failed to update user role", message: error.message });
+    }
+  });
+
+  // Admin endpoint to get all merchants for role assignment
+  app.get("/api/admin/merchants", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const merchants = await storage.getAllMerchants();
+      res.json({ merchants });
+    } catch (error: any) {
+      console.error("Admin merchants fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch merchants", message: error.message });
+    }
+  });
+
+  // ============================================
+  // INTEGRATED MERCHANT PORTAL ROUTES (for users with merchant roles)
+  // These routes allow main app users with merchant_admin/merchant_staff roles
+  // to access merchant functionality without separate merchant login
+  // ============================================
+
+  // Get merchant dashboard for authenticated users with merchant roles
+  app.get("/api/merchant-portal/dashboard", isAuthenticated, isMerchantRole, async (req, res) => {
+    try {
+      const merchantId = (req as any).merchantId;
+      const merchant = await storage.getMerchantById(merchantId);
+      
+      if (!merchant) {
+        return res.status(404).json({ error: "Merchant not found" });
+      }
+      
+      const verifications = await storage.getVerificationsByMerchant(merchant.id, 20);
+      const staff = await storage.getMerchantUsers(merchant.id);
+      
+      res.json({
+        merchant: {
+          id: merchant.id,
+          businessName: merchant.businessName,
+          email: merchant.email,
+          returnPolicyDays: merchant.returnPolicyDays,
+          warrantyMonths: merchant.warrantyMonths,
+        },
+        recentVerifications: verifications,
+        staffCount: staff.length,
+      });
+    } catch (error: any) {
+      console.error("Merchant portal dashboard error:", error);
+      res.status(500).json({ error: "Failed to fetch dashboard" });
+    }
+  });
+
+  // Verify a claim via integrated merchant portal
+  app.post("/api/merchant-portal/verify", isAuthenticated, isMerchantRole, async (req, res) => {
+    try {
+      const merchantId = (req as any).merchantId;
+      const merchantUser = (req as any).merchantUser;
+      const validatedData = verifyClaimSchema.parse(req.body);
+      
+      // Rate limit PIN verification attempts per claim code (5 attempts per 15 minutes)
+      const rateLimitKey = `merchant_verify:${validatedData.claimCode}`;
+      if (!rateLimit(rateLimitKey, 5, 15 * 60 * 1000)) {
+        return res.status(429).json({ 
+          error: "Too many verification attempts. Please try again later.",
+          retryAfter: 15 * 60
+        });
+      }
+      
+      const claim = await storage.getClaimByCode(validatedData.claimCode);
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      
+      // Check if claim is in a valid state for verification
+      if (claim.state !== 'issued' && claim.state !== 'pending') {
+        return res.status(400).json({ 
+          error: `Claim cannot be verified - current state: ${claim.state}` 
+        });
+      }
+      
+      // Verify PIN
+      const pinCorrect = validatedData.pin === claim.pin;
+      
+      // Get merchant for policy info
+      const merchant = await storage.getMerchantById(merchantId);
+      
+      // Log verification attempt
+      await storage.createClaimVerification({
+        claimId: claim.id,
+        merchantId: merchantId,
+        merchantUserId: merchantUser.id,
+        result: pinCorrect ? 'approved' : 'rejected',
+        attemptedPin: validatedData.pin,
+        pinCorrect,
+        notes: null,
+      });
+      
+      if (!pinCorrect) {
+        // Check for fraud patterns
+        const failedAttempts = await storage.getFailedPinAttempts(claim.id, 15);
+        if (failedAttempts >= 3) {
+          await storage.createFraudEvent({
+            userId: claim.userId,
+            claimId: claim.id,
+            eventType: 'excessive_pin_failures',
+            severity: 'high',
+            description: `Excessive PIN failures (${failedAttempts} attempts) detected`,
+            metadata: JSON.stringify({ failedAttempts, lastAttempt: new Date().toISOString() }),
+          });
+        }
+        
+        return res.status(400).json({ 
+          error: "Invalid PIN", 
+          pinCorrect: false,
+          attemptsRemaining: Math.max(0, 3 - failedAttempts)
+        });
+      }
+      
+      // PIN correct - update claim state to pending
+      await storage.updateClaimState(claim.id, 'pending');
+      
+      // Get purchase details for response
+      const purchase = await storage.getPurchaseById(claim.userId, claim.purchaseId);
+      
+      res.json({
+        verified: true,
+        claim: {
+          id: claim.id,
+          claimCode: claim.claimCode,
+          state: 'pending',
+          claimType: claim.claimType,
+          originalAmount: claim.originalAmount,
+          expiresAt: claim.expiresAt,
+        },
+        purchase: purchase ? {
+          merchant: purchase.merchant,
+          date: purchase.date,
+          total: purchase.total,
+          returnBy: purchase.returnBy,
+          warrantyEnds: purchase.warrantyEnds,
+        } : null,
+        merchant: merchant ? {
+          businessName: merchant.businessName,
+          returnPolicyDays: merchant.returnPolicyDays,
+        } : null,
+      });
+    } catch (error: any) {
+      console.error("Merchant portal verify error:", error);
+      res.status(500).json({ error: "Verification failed", message: error.message });
+    }
+  });
+
+  // Redeem a verified claim via integrated merchant portal
+  app.post("/api/merchant-portal/redeem", isAuthenticated, isMerchantRole, async (req, res) => {
+    try {
+      const merchantId = (req as any).merchantId;
+      const merchantUser = (req as any).merchantUser;
+      const validatedData = redeemClaimSchema.parse(req.body);
+      
+      const claim = await storage.getClaimByCode(validatedData.claimCode);
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      
+      if (claim.state !== 'pending') {
+        return res.status(400).json({ 
+          error: `Claim cannot be redeemed - current state: ${claim.state}` 
+        });
+      }
+      
+      // Determine final state based on refund amount
+      const originalAmount = parseFloat(claim.originalAmount || '0');
+      const refundAmount = validatedData.refundAmount || originalAmount;
+      const finalState = refundAmount < originalAmount ? 'partial' : 'redeemed';
+      
+      // Update claim
+      await storage.updateClaimState(
+        claim.id, 
+        finalState, 
+        { merchantId, userId: merchantUser.id },
+        refundAmount.toString()
+      );
+      
+      // Log verification/redemption
+      await storage.createClaimVerification({
+        claimId: claim.id,
+        merchantId: merchantId,
+        merchantUserId: merchantUser.id,
+        result: finalState === 'partial' ? 'partial_approved' : 'approved',
+        refundAmount: refundAmount.toString(),
+        notes: validatedData.notes || null,
+      });
+      
+      res.json({
+        success: true,
+        claim: {
+          id: claim.id,
+          claimCode: claim.claimCode,
+          state: finalState,
+          refundedAmount: refundAmount,
+        }
+      });
+    } catch (error: any) {
+      console.error("Merchant portal redeem error:", error);
+      res.status(500).json({ error: "Redemption failed", message: error.message });
+    }
+  });
+
+  // Get recent verifications for integrated merchant portal
+  app.get("/api/merchant-portal/verifications", isAuthenticated, isMerchantRole, async (req, res) => {
+    try {
+      const merchantId = (req as any).merchantId;
+      const limit = parseInt(req.query.limit as string) || 50;
+      
+      const verifications = await storage.getVerificationsByMerchant(merchantId, limit);
+      res.json({ verifications });
+    } catch (error: any) {
+      console.error("Merchant portal verifications error:", error);
+      res.status(500).json({ error: "Failed to fetch verifications" });
+    }
+  });
+
+  // Protected claim lookup for integrated merchant portal
+  app.get("/api/merchant-portal/lookup/:claimCode", isAuthenticated, isMerchantRole, async (req, res) => {
+    try {
+      const { claimCode } = req.params;
+      
+      const claim = await storage.getClaimByCode(claimCode);
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found", valid: false });
+      }
+      
+      const now = new Date();
+      const expiresAt = new Date(claim.expiresAt);
+      const isExpired = now > expiresAt;
+      const isUsed = claim.state === 'redeemed' || claim.state === 'partial' || claim.state === 'refused';
+      
+      res.json({
+        valid: !isExpired && !isUsed && (claim.state === 'issued' || claim.state === 'pending'),
+        claim: {
+          claimCode: claim.claimCode,
+          claimType: claim.claimType,
+          state: claim.state,
+          merchantName: claim.merchantName,
+          originalAmount: claim.originalAmount,
+          purchaseDate: claim.purchaseDate,
+          expiresAt: claim.expiresAt.toISOString(),
+          isExpired,
+          isUsed,
+        }
+      });
+    } catch (error: any) {
+      console.error("Merchant portal lookup error:", error);
+      res.status(500).json({ error: "Lookup failed" });
+    }
+  });
+
   // ============================================
   // MERCHANT VERIFICATION SYSTEM ROUTES
+  // (Legacy routes using separate merchant session authentication)
   // ============================================
 
   // Generate a unique API key for merchants
@@ -2303,18 +2968,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Calculate expiry based on claim type
       let expiresAt: Date;
       if (validatedData.claimType === 'return') {
+        if (!purchase.returnBy) {
+          // Check if it's a conditional policy (has refundType but no specific date)
+          if (purchase.refundType === 'none') {
+            return res.status(400).json({ 
+              error: "Returns not accepted for this purchase",
+              suggestion: purchase.warrantyEnds ? "Try creating a warranty claim instead" : "Try creating an exchange claim instead"
+            });
+          }
+          return res.status(400).json({ 
+            error: "No return policy specified for this purchase. This may require the original invoice at the store.",
+            suggestion: purchase.warrantyEnds ? "Try creating a warranty claim instead" : "Try creating an exchange claim instead"
+          });
+        }
         const returnByDate = new Date(purchase.returnBy);
         if (returnByDate < new Date()) {
-          return res.status(400).json({ error: "Return period has expired" });
+          return res.status(400).json({ 
+            error: "Return period has expired",
+            suggestion: purchase.warrantyEnds && new Date(purchase.warrantyEnds) > new Date() ? "Try creating a warranty claim instead" : undefined
+          });
         }
         expiresAt = returnByDate;
       } else if (validatedData.claimType === 'warranty') {
+        if (!purchase.warrantyEnds) {
+          return res.status(400).json({ 
+            error: "No warranty specified for this purchase",
+            suggestion: "Try creating an exchange claim instead"
+          });
+        }
         const warrantyDate = new Date(purchase.warrantyEnds);
         if (warrantyDate < new Date()) {
           return res.status(400).json({ error: "Warranty period has expired" });
         }
         expiresAt = warrantyDate;
       } else {
+        // Exchange claims always allowed with 90-day expiry
         expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
       }
       
@@ -2430,9 +3118,31 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
 
   // Public verification lookup (from QR code scan)
+  // Rate limited and with minimal data exposure
+  // Note: For full claim details, use the protected /api/merchant-portal/lookup endpoint
   app.get("/api/verify/:claimCode", async (req, res) => {
     try {
       const { claimCode } = req.params;
+      
+      // Rate limit public lookups per IP (15 per 15 minutes)
+      const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
+      const rateLimitKey = `public_verify:${ipAddress}`;
+      if (!rateLimit(rateLimitKey, 15, 15 * 60 * 1000)) {
+        return res.status(429).json({ 
+          error: "Too many lookup requests. Please try again later.",
+          retryAfter: 15 * 60
+        });
+      }
+      
+      // Also rate limit per claim code (5 per 15 minutes)
+      const claimRateLimitKey = `public_verify_claim:${claimCode}`;
+      if (!rateLimit(claimRateLimitKey, 5, 15 * 60 * 1000)) {
+        return res.status(429).json({ 
+          error: "Too many lookup requests for this claim. Please try again later.",
+          retryAfter: 15 * 60
+        });
+      }
+      
       const claim = await storage.getClaimByCode(claimCode);
       
       if (!claim) {
@@ -2440,10 +3150,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       
       const isExpired = new Date(claim.expiresAt) < new Date();
-      const isUsed = claim.state === 'redeemed' || claim.state === 'refused';
+      const isUsed = claim.state === 'redeemed' || claim.state === 'partial' || claim.state === 'refused';
       
+      // Minimal public response - only validity and basic type info
+      // Full details require authenticated access
       res.json({
-        valid: !isExpired && !isUsed,
+        valid: !isExpired && !isUsed && (claim.state === 'issued' || claim.state === 'pending'),
         claim: {
           claimCode: claim.claimCode,
           claimType: claim.claimType,

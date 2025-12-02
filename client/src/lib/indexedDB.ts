@@ -10,12 +10,16 @@ export interface OfflineReceipt {
   merchant: string;
   date: string;
   total: string;
+  invoiceNumber?: string | null;
   returnBy: string | null;
   warrantyEnds: string | null;
   imagePath?: string;
   confidence?: ConfidenceLevel;
   createdAt: string;
   synced: boolean;
+  refundType?: 'not_specified' | 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
+  returnPolicyDays?: number | null;
+  warrantyMonths?: number | null;
 }
 
 export interface PendingUpload {
@@ -23,6 +27,7 @@ export interface PendingUpload {
   merchant: string;           // User-edited values (not OCR output)
   date: string;
   total: string;
+  invoiceNumber?: string | null;
   category: string;
   receiptId: string;
   fileBlob: Blob;            // Original file for preview re-upload

@@ -1,4 +1,4 @@
-import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3 } from "lucide-react";
+import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -77,7 +77,8 @@ export function AppSidebar() {
     }
   };
 
-  const isAdmin = user?.role === "admin";
+  const isAdmin = user?.role === "admin" || user?.role === "support";
+  const isMerchant = user?.role === "merchant_admin" || user?.role === "merchant_staff";
 
   const switchContextMutation = useMutation({
     mutationFn: async (context: string) => {
@@ -87,6 +88,13 @@ export function AppSidebar() {
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/users/me"], data.user);
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/personal"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/reports/summary"] });
+      // Auto-close sidebar on mobile after context switch
+      if (isMobile) {
+        setOpenMobile(false);
+      }
       toast({
         title: "Context switched",
         description: `Switched to ${data.user.activeContext === "business" ? "Business" : "Personal"} mode`,
@@ -186,6 +194,24 @@ export function AppSidebar() {
                     <Link href="/admin" data-testid="nav-admin" onClick={handleMenuItemClick}>
                       <Shield className="h-4 w-4" />
                       <span>Admin Dashboard</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {isMerchant && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Merchant</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/merchant-portal"}>
+                    <Link href="/merchant-portal" data-testid="nav-merchant" onClick={handleMenuItemClick}>
+                      <Store className="h-4 w-4" />
+                      <span>Merchant Portal</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

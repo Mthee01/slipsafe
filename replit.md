@@ -19,13 +19,20 @@ Preferred communication style: Simple, everyday language.
 
 **Backend**:
 - **API**: RESTful Express.js server handling receipt OCR processing, claim generation/verification, merchant portal, and USSD webhooks.
-- **OCR Pipeline**: Processes uploaded receipts (JPEG/PNG/PDF) using Tesseract.js for text extraction with Sharp image preprocessing. Employs enhanced regex and heuristics to extract merchant, date, total, VAT, invoice number, and store policies, with robust date normalization and validation. Computes return/warranty deadlines and generates an SHA256 hash for deduplication.
+- **OCR Pipeline**: Hybrid OCR approach with Google Gemini Vision AI as primary method and Tesseract.js as fallback.
+  - **Primary: Gemini Vision AI** (`server/lib/gemini-ocr.ts`): Uses multimodal AI to analyze receipt images directly, providing superior accuracy especially for thermal receipts. Extracts merchant, date, total, VAT, invoice number, and policies in a single API call.
+  - **Fallback: Tesseract.js**: Traditional OCR with Sharp image preprocessing (3x upscale, normalization, contrast enhancement) used when Gemini is unavailable. Employs enhanced regex and heuristics for data extraction.
   - **VAT Extraction**: Three-tier logic for extracting explicit VAT, calculating from subtotal/total difference, or estimating at 15%.
   - **Policy Extraction**: Automatically extracts return policy days, refund types, exchange policy periods, and warranty terms.
+  - **Conditional Policy Detection**: Distinguishes between conditional policies ("NO REFUNDS WITHOUT ORIGINAL INVOICE" = returns allowed with invoice) and unconditional bans ("ALL SALES FINAL" = no returns). Conditional policies show "Not specified" for days rather than "No returns accepted".
+  - **Merchant Rules Fallback**: When receipt shows conditional policy but no specific days, system pulls default return/warranty days from merchant rules table if configured. Policy source is tracked as 'merchant_default' in these cases.
   - **Policy Editing**: Users can manually enter or edit policies.
-- **Email Receipt Support**: Accepts pasted email receipt content (HTML or plain text) via `/api/receipts/text` endpoint. Cleans HTML tags and extracts relevant data, bypassing OCR.
+- **Email Receipt Support**: Accepts pasted email receipt content (HTML or plain text) via `/api/receipts/text` endpoint. Uses Gemini AI for intelligent parsing of email receipts (with regex fallback), extracting merchant, date, total, invoice numbers, and policies from complex email formats.
 - **Claim System**: Generates JWT tokens with 90-day expiration for claims, uses 6-digit random PINs for verification, and QR codes encoding verification URLs. State machine tracks claim lifecycle.
-- **Merchant Portal**: Separate authentication system for store staff to verify customer claims via QR code scanning or manual entry, process refunds, log refusals, and manage staff. Includes fraud detection and an audit trail.
+- **Merchant Portal**: Dual access modes:
+  - **Legacy Portal** (`/merchant`): Separate session-based authentication for dedicated merchant staff with their own login credentials.
+  - **Integrated Portal** (`/merchant-portal`): For main app users with `merchant_admin` or `merchant_staff` roles, accessible via sidebar without separate login.
+  - Both portals support claim verification via QR code scanning or manual entry, refund processing, and verification history. Includes fraud detection and audit trail.
 - **Security**: Session-based authentication with `passport-local`, rate limiting, and 1-hour expiring, single-use password reset tokens.
 - **Email Verification**: Registration requires email verification before login, with tokens expiring after 24 hours.
 - **Email System**: Integrates with Resend for professional HTML email delivery for verification, welcome, and account recovery.
@@ -46,7 +53,8 @@ Preferred communication style: Simple, everyday language.
 - **Resend**: Transactional email delivery.
 
 **Key Libraries**:
-- `tesseract.js`: For OCR processing.
+- `@google/genai`: Gemini Vision AI for primary OCR.
+- `tesseract.js`: Fallback OCR processing.
 - `sharp`: Image preprocessing.
 - `multer`: Handles multipart file uploads.
 - `jsonwebtoken`: For JWT creation and verification.
@@ -72,5 +80,6 @@ Preferred communication style: Simple, everyday language.
 - `RESEND_API_KEY`
 - `ADMIN_USERNAME`
 - `ADMIN_PASSWORD`
+- `AI_INTEGRATIONS_GEMINI_API_KEY` - Gemini Vision AI for OCR (auto-configured via Replit integration)
 - `PORT`
 - `NODE_ENV`

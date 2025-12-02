@@ -20,7 +20,7 @@ import {
   Scan,
   KeyRound,
   AlertTriangle,
-  DollarSign
+  Coins
 } from "lucide-react";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
@@ -716,7 +716,7 @@ function VerificationHistory({ session }: { session: MerchantSession }) {
                 {v.result === "approved" ? (
                   <CheckCircle className="h-5 w-5 text-green-500" />
                 ) : v.result === "partial_approved" ? (
-                  <DollarSign className="h-5 w-5 text-amber-500" />
+                  <Coins className="h-5 w-5 text-amber-500" />
                 ) : (
                   <XCircle className="h-5 w-5 text-red-500" />
                 )}

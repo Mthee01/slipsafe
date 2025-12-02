@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { useImageQuality, type ImageQualityResult } from "@/hooks/use-image-quality";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
-import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw, Mail, AlertCircle } from "lucide-react";
+import { Upload, FileText, Clock, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw, Mail, AlertCircle, Coins } from "lucide-react";
 import { CATEGORIES, type Purchase, type ConfidenceLevel, REFUND_TYPES } from "@shared/schema";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -28,7 +28,7 @@ import {
 interface PolicyData {
   returnPolicyDays: number | null;
   returnPolicyTerms: string | null;
-  refundType: 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
+  refundType: 'not_specified' | 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
   exchangePolicyDays: number | null;
   exchangePolicyTerms: string | null;
   warrantyMonths: number | null;
@@ -39,7 +39,7 @@ interface PolicyData {
 const defaultPolicies: PolicyData = {
   returnPolicyDays: null,
   returnPolicyTerms: null,
-  refundType: null,
+  refundType: 'not_specified',
   exchangePolicyDays: null,
   exchangePolicyTerms: null,
   warrantyMonths: null,
@@ -72,24 +72,42 @@ export default function Home() {
     merchant: string;
     date: string;
     total: string;
+    invoiceNumber: string;
   } | null>(null);
   const [editedPolicies, setEditedPolicies] = useState<PolicyData>(defaultPolicies);
   const [showPolicyEditor, setShowPolicyEditor] = useState(false);
   const [savedPurchase, setSavedPurchase] = useState<Purchase | null>(null);
 
   // Compute deadlines based on edited date and policy values
+  // Only compute if policies are actually specified - no default fallbacks
   const computedDeadlines = editedData?.date ? (() => {
     const purchaseDate = new Date(editedData.date);
-    const returnDays = editedPolicies.returnPolicyDays || 30;
-    const warrantyMonthsValue = editedPolicies.warrantyMonths || 12;
     
-    const returnBy = new Date(purchaseDate);
-    returnBy.setDate(returnBy.getDate() + returnDays);
-    const warrantyEnds = new Date(purchaseDate);
-    warrantyEnds.setMonth(warrantyEnds.getMonth() + warrantyMonthsValue);
+    // Check if returns are explicitly disallowed
+    const noReturnsAllowed = editedPolicies.refundType === 'none' || editedPolicies.returnPolicyDays === 0;
+    
+    // Only compute return deadline if:
+    // 1. Returns are allowed (refundType is not 'none')
+    // 2. returnPolicyDays is explicitly set to a positive number
+    let returnBy: string | null = null;
+    if (!noReturnsAllowed && editedPolicies.returnPolicyDays && editedPolicies.returnPolicyDays > 0) {
+      const returnDate = new Date(purchaseDate);
+      returnDate.setDate(returnDate.getDate() + editedPolicies.returnPolicyDays);
+      returnBy = returnDate.toISOString().split('T')[0];
+    }
+    
+    // Only compute warranty end if warrantyMonths is explicitly set
+    let warrantyEnds: string | null = null;
+    if (editedPolicies.warrantyMonths && editedPolicies.warrantyMonths > 0) {
+      const warrantyDate = new Date(purchaseDate);
+      warrantyDate.setMonth(warrantyDate.getMonth() + editedPolicies.warrantyMonths);
+      warrantyEnds = warrantyDate.toISOString().split('T')[0];
+    }
+    
     return {
-      returnBy: returnBy.toISOString().split('T')[0],
-      warrantyEnds: warrantyEnds.toISOString().split('T')[0]
+      returnBy,
+      warrantyEnds,
+      noReturnsAllowed
     };
   })() : null;
   const [showCamera, setShowCamera] = useState(false);
@@ -150,6 +168,7 @@ export default function Home() {
         merchant: data.ocrData.merchant || "",
         date: data.ocrData.date || "",
         total: data.ocrData.total || "",
+        invoiceNumber: data.ocrData.invoiceNumber || "",
       });
       
       // Set policies from OCR if extracted
@@ -226,6 +245,7 @@ export default function Home() {
         merchant: data.ocrData.merchant || "",
         date: data.ocrData.date || "",
         total: data.ocrData.total?.toString() || "",
+        invoiceNumber: data.ocrData.invoiceNumber || "",
       });
       
       // Set policies from email parsing if extracted
@@ -292,18 +312,22 @@ export default function Home() {
       // If offline, queue the upload
       if (!isOnline) {
         const tempId = `offline-${Date.now()}`;
-        const deadlines = computedDeadlines || { returnBy: '', warrantyEnds: '' };
+        const deadlines = computedDeadlines || { returnBy: null, warrantyEnds: null, noReturnsAllowed: false };
         
         await saveReceiptOffline({
           id: tempId,
           merchant: editedData.merchant.trim(),
           date: editedData.date,
           total: editedData.total,
-          returnBy: deadlines.returnBy || null,
-          warrantyEnds: deadlines.warrantyEnds || null,
+          invoiceNumber: editedData.invoiceNumber || null,
+          returnBy: deadlines.returnBy,
+          warrantyEnds: deadlines.warrantyEnds,
           confidence: ocrResult.confidence,
           createdAt: new Date().toISOString(),
           synced: false,
+          refundType: editedPolicies.refundType,
+          returnPolicyDays: editedPolicies.returnPolicyDays,
+          warrantyMonths: editedPolicies.warrantyMonths,
         });
         
         if (selectedFile) {
@@ -311,6 +335,7 @@ export default function Home() {
             merchant: editedData.merchant.trim(),
             date: editedData.date,
             total: editedData.total,
+            invoiceNumber: editedData.invoiceNumber || null,
             category: selectedCategory,
             receiptId: tempId,
             fileBlob: selectedFile,
@@ -338,6 +363,7 @@ export default function Home() {
           merchant: editedData.merchant.trim(),
           date: editedData.date,
           total: editedData.total,
+          invoiceNumber: editedData.invoiceNumber || null,
           category: selectedCategory,
           policies: editedPolicies,
         });
@@ -345,18 +371,22 @@ export default function Home() {
         // If network error, queue for later
         if (error.message?.includes('Failed to fetch') || error.message?.includes('Network')) {
           const tempId = `offline-${Date.now()}`;
-          const deadlines = computedDeadlines || { returnBy: '', warrantyEnds: '' };
+          const deadlines = computedDeadlines || { returnBy: null, warrantyEnds: null, noReturnsAllowed: false };
           
           await saveReceiptOffline({
             id: tempId,
             merchant: editedData.merchant.trim(),
             date: editedData.date,
             total: editedData.total,
-            returnBy: deadlines.returnBy || null,
-            warrantyEnds: deadlines.warrantyEnds || null,
+            invoiceNumber: editedData.invoiceNumber || null,
+            returnBy: deadlines.returnBy,
+            warrantyEnds: deadlines.warrantyEnds,
             confidence: ocrResult.confidence,
             createdAt: new Date().toISOString(),
             synced: false,
+            refundType: editedPolicies.refundType,
+            returnPolicyDays: editedPolicies.returnPolicyDays,
+            warrantyMonths: editedPolicies.warrantyMonths,
           });
           
           if (selectedFile) {
@@ -364,6 +394,7 @@ export default function Home() {
               merchant: editedData.merchant.trim(),
               date: editedData.date,
               total: editedData.total,
+              invoiceNumber: editedData.invoiceNumber || null,
               category: selectedCategory,
               receiptId: tempId,
               fileBlob: selectedFile,
@@ -950,6 +981,7 @@ export default function Home() {
                         merchant: "",
                         date: new Date().toISOString().split('T')[0],
                         total: "",
+                        invoiceNumber: "",
                       });
                     }}
                     data-testid="button-manual-entry"
@@ -1018,8 +1050,8 @@ export default function Home() {
 
                   <div className="space-y-2">
                     <Label htmlFor="edit-total" className="flex items-center gap-2">
-                      <DollarSign className="h-4 w-4" />
-                      Total Amount
+                      <Coins className="h-4 w-4" />
+                      Total Amount (R)
                     </Label>
                     <Input
                       id="edit-total"
@@ -1033,63 +1065,59 @@ export default function Home() {
                   </div>
                 </div>
 
-                {ocrResult?.invoiceNumber ? (
-                  <div className="space-y-2">
-                    <Label htmlFor="edit-invoice" className="flex items-center gap-2">
-                      <FileText className="h-4 w-4" />
-                      Invoice / Receipt Number
-                      <Badge variant="secondary" className="text-[10px]">Auto-detected</Badge>
-                    </Label>
-                    <Input
-                      id="edit-invoice"
-                      value={ocrResult.invoiceNumber}
-                      readOnly
-                      className="bg-muted cursor-not-allowed"
-                      data-testid="input-edit-invoice"
-                    />
-                  </div>
-                ) : (
-                  <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md space-y-2" data-testid="alert-no-invoice">
-                    <div className="flex items-center gap-2 text-destructive">
-                      <AlertCircle className="h-4 w-4" />
-                      <p className="text-sm font-medium">Invoice/Order Number Required</p>
-                    </div>
+                <div className="space-y-2">
+                  <Label htmlFor="edit-invoice" className="flex items-center gap-2">
+                    <FileText className="h-4 w-4" />
+                    Invoice / Receipt Number
+                    <Badge variant="secondary" className="text-[10px]">
+                      {ocrResult?.invoiceNumber ? 'Auto-detected' : 'Optional'}
+                    </Badge>
+                  </Label>
+                  <Input
+                    id="edit-invoice"
+                    value={editedData.invoiceNumber || ''}
+                    onChange={(e) => setEditedData({ ...editedData, invoiceNumber: e.target.value })}
+                    placeholder="Enter if visible on receipt"
+                    data-testid="input-edit-invoice"
+                  />
+                  {!ocrResult?.invoiceNumber && (
                     <p className="text-xs text-muted-foreground">
-                      No invoice or order number was detected on this receipt. Please reload the receipt with better lighting or use a clearer image.
+                      No invoice number was auto-detected. You can enter it manually if visible on the receipt, or leave blank.
                     </p>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => {
-                        setOcrResult(null);
-                        setEditedData(null);
-                        setSelectedFile(null);
-                        setPreviewUrl(null);
-                      }}
-                      className="mt-2"
-                      data-testid="button-reload-receipt"
-                    >
-                      <RotateCcw className="h-4 w-4 mr-2" />
-                      Reload Receipt
-                    </Button>
-                  </div>
-                )}
+                  )}
+                </div>
 
                 <div className="p-3 bg-muted rounded-md space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                    Computed Deadlines
+                    Return & Warranty Period
                   </p>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">Return By ({editedPolicies.returnPolicyDays || 30} days)</p>
+                      <p className="text-xs text-muted-foreground">
+                        {computedDeadlines?.noReturnsAllowed 
+                          ? 'Returns' 
+                          : editedPolicies.returnPolicyDays 
+                            ? `Return By (${editedPolicies.returnPolicyDays} days)` 
+                            : 'Return Policy'}
+                      </p>
                       <p className="font-medium" data-testid="text-computed-return">
-                        {computedDeadlines ? new Date(computedDeadlines.returnBy).toLocaleDateString() : 'N/A'}
+                        {computedDeadlines?.noReturnsAllowed 
+                          ? 'No returns accepted'
+                          : computedDeadlines?.returnBy 
+                            ? new Date(computedDeadlines.returnBy).toLocaleDateString() 
+                            : 'Not specified'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Warranty Ends ({editedPolicies.warrantyMonths || 12} months)</p>
+                      <p className="text-xs text-muted-foreground">
+                        {editedPolicies.warrantyMonths 
+                          ? `Warranty Ends (${editedPolicies.warrantyMonths} months)` 
+                          : 'Warranty'}
+                      </p>
                       <p className="font-medium" data-testid="text-computed-warranty">
-                        {computedDeadlines ? new Date(computedDeadlines.warrantyEnds).toLocaleDateString() : 'N/A'}
+                        {computedDeadlines?.warrantyEnds 
+                          ? new Date(computedDeadlines.warrantyEnds).toLocaleDateString() 
+                          : 'Not specified'}
                       </p>
                     </div>
                   </div>
@@ -1120,11 +1148,22 @@ export default function Home() {
                     </Button>
                   </div>
                   
-                  {/* No Policies Detected Message */}
-                  {!editedPolicies.returnPolicyDays && !editedPolicies.warrantyMonths && editedPolicies.policySource !== 'user_entered' && (
+                  {/* No Policies Detected Message - only show if no policies detected AND refundType is not 'none' */}
+                  {!editedPolicies.returnPolicyDays && !editedPolicies.warrantyMonths && !editedPolicies.returnPolicyTerms && editedPolicies.refundType !== 'none' && editedPolicies.policySource !== 'user_entered' && (
                     <div className="p-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2" data-testid="alert-no-policies">
                       <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
                       <span>No policies detected. Click Edit to add return/warranty information.</span>
+                    </div>
+                  )}
+                  
+                  {/* Extracted Policy Terms Text */}
+                  {editedPolicies.returnPolicyTerms && (
+                    <div className="p-2 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded text-xs text-blue-700 dark:text-blue-300" data-testid="text-policy-terms">
+                      <p className="font-medium mb-1 flex items-center gap-1">
+                        <Info className="h-3 w-3" />
+                        Store Policy (from receipt):
+                      </p>
+                      <p className="italic">{editedPolicies.returnPolicyTerms}</p>
                     </div>
                   )}
                   
@@ -1133,8 +1172,11 @@ export default function Home() {
                     <div>
                       <p className="text-xs text-muted-foreground">Return Policy</p>
                       <p className="font-medium" data-testid="text-return-policy">
-                        {editedPolicies.returnPolicyDays ? `${editedPolicies.returnPolicyDays} days` : 'Not specified'}
-                        {editedPolicies.refundType && ` (${editedPolicies.refundType.replace('_', ' ')})`}
+                        {editedPolicies.refundType === 'none' 
+                          ? 'No returns accepted'
+                          : editedPolicies.returnPolicyDays 
+                            ? `${editedPolicies.returnPolicyDays} days${editedPolicies.refundType && editedPolicies.refundType !== 'not_specified' ? ` (${editedPolicies.refundType.replace('_', ' ')})` : ''}`
+                            : 'Not specified'}
                       </p>
                     </div>
                     <div>
@@ -1162,7 +1204,7 @@ export default function Home() {
                               returnPolicyDays: e.target.value ? parseInt(e.target.value) : null,
                               policySource: 'user_entered'
                             })}
-                            placeholder="30"
+                            placeholder=""
                             data-testid="input-return-days"
                           />
                         </div>
@@ -1180,6 +1222,7 @@ export default function Home() {
                               <SelectValue placeholder="Select type" />
                             </SelectTrigger>
                             <SelectContent>
+                              <SelectItem value="not_specified">Not specified</SelectItem>
                               <SelectItem value="full">Full Refund</SelectItem>
                               <SelectItem value="store_credit">Store Credit</SelectItem>
                               <SelectItem value="exchange_only">Exchange Only</SelectItem>
@@ -1203,7 +1246,7 @@ export default function Home() {
                               exchangePolicyDays: e.target.value ? parseInt(e.target.value) : null,
                               policySource: 'user_entered'
                             })}
-                            placeholder="30"
+                            placeholder=""
                             data-testid="input-exchange-days"
                           />
                         </div>
@@ -1220,7 +1263,7 @@ export default function Home() {
                               warrantyMonths: e.target.value ? parseInt(e.target.value) : null,
                               policySource: 'user_entered'
                             })}
-                            placeholder="12"
+                            placeholder=""
                             data-testid="input-warranty-months"
                           />
                         </div>
@@ -1263,7 +1306,7 @@ export default function Home() {
                 </Button>
                 <Button
                   onClick={handleConfirm}
-                  disabled={confirmMutation.isPending || !editedData.merchant || !editedData.date || !editedData.total || !ocrResult?.invoiceNumber}
+                  disabled={confirmMutation.isPending || !editedData.merchant || !editedData.date || !editedData.total}
                   className="flex-1"
                   data-testid="button-confirm"
                 >
@@ -1316,11 +1359,11 @@ export default function Home() {
 
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <DollarSign className="h-4 w-4" />
+                    <Coins className="h-4 w-4" />
                     Total
                   </div>
                   <p className="font-medium" data-testid="text-saved-total">
-                    ${savedPurchase.total}
+                    R{savedPurchase.total}
                   </p>
                 </div>
 

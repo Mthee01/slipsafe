@@ -8,13 +8,14 @@ import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Calendar, DollarSign, Store, Clock, Tag, ArrowRight, Filter, Sparkles, Info, Download } from "lucide-react";
+import { Search, Calendar, Store, Clock, Tag, ArrowRight, Filter, Sparkles, Info, Download, Coins, Eye, X, FileText } from "lucide-react";
 import { CATEGORIES, type Purchase, type ConfidenceLevel, type MerchantRule } from "@shared/schema";
 import { Link } from "wouter";
 
 export default function Receipts() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [viewingPdfId, setViewingPdfId] = useState<string | null>(null);
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -47,50 +48,130 @@ export default function Receipts() {
   const purchases = data?.purchases || [];
   const merchantRules = merchantRulesData?.rules || [];
 
-  const getMerchantPolicyInfo = (merchantName: string, purchaseDate: string) => {
-    // Normalize merchant name to match server-side normalization
-    const normalizedName = merchantName.toLowerCase().trim();
-    
-    // Find matching merchant rule
+  // Get policy info from the purchase itself (or merchant rules as fallback for display label)
+  const getPurchasePolicyInfo = (purchase: Purchase) => {
+    const normalizedName = purchase.merchant.toLowerCase().trim();
     const rule = merchantRules.find(r => r.normalizedMerchantName === normalizedName);
     
-    if (rule) {
+    // Check if returns are explicitly disallowed
+    if (purchase.refundType === 'none') {
       return {
-        hasCustomRule: true,
-        returnDays: rule.returnPolicyDays,
-        warrantyMonths: rule.warrantyMonths,
-        returnLabel: `${rule.returnPolicyDays}-day return`,
-        warrantyLabel: `${rule.warrantyMonths}-month warranty`,
+        hasReturnPolicy: false,
+        hasWarrantyPolicy: !!purchase.warrantyMonths,
+        returnLabel: 'No returns accepted',
+        warrantyLabel: purchase.warrantyMonths 
+          ? `${purchase.warrantyMonths}-month warranty`
+          : 'Not specified',
+        isCustom: true,
       };
     }
     
-    // Default values
+    // Use purchase's own policy data if available
+    if (purchase.returnPolicyDays || purchase.warrantyMonths) {
+      return {
+        hasReturnPolicy: !!purchase.returnPolicyDays,
+        hasWarrantyPolicy: !!purchase.warrantyMonths,
+        returnLabel: purchase.returnPolicyDays 
+          ? `${purchase.returnPolicyDays}-day return` 
+          : 'Not specified',
+        warrantyLabel: purchase.warrantyMonths 
+          ? `${purchase.warrantyMonths}-month warranty`
+          : 'Not specified',
+        isCustom: true,
+      };
+    }
+    
+    // Fall back to merchant rule if available
+    if (rule) {
+      return {
+        hasReturnPolicy: true,
+        hasWarrantyPolicy: true,
+        returnLabel: `${rule.returnPolicyDays}-day return (store default)`,
+        warrantyLabel: `${rule.warrantyMonths}-month warranty (store default)`,
+        isCustom: false,
+      };
+    }
+    
+    // No policy info available
     return {
-      hasCustomRule: false,
-      returnDays: 30,
-      warrantyMonths: 12,
-      returnLabel: "Default 30-day return",
-      warrantyLabel: "Default 12-month warranty",
+      hasReturnPolicy: false,
+      hasWarrantyPolicy: false,
+      returnLabel: 'Not specified',
+      warrantyLabel: 'Not specified',
+      isCustom: false,
     };
   };
 
-  const getStatusBadge = (returnBy: string, warrantyEnds: string) => {
+  const getStatusBadge = (returnBy: string | null, warrantyEnds: string | null, refundType?: string | null, hasReturnPolicy?: boolean, hasWarrantyPolicy?: boolean) => {
     const now = new Date();
-    const returnDate = new Date(returnBy);
-    const warrantyDate = new Date(warrantyEnds);
     
-    const returnDaysLeft = Math.ceil((returnDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
-    const warrantyDaysLeft = Math.ceil((warrantyDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+    // Check if returns are not allowed
+    const noReturnsAllowed = refundType === 'none';
+    
+    // Handle null/missing dates
+    const hasValidReturnBy = returnBy && !isNaN(new Date(returnBy).getTime());
+    const hasValidWarrantyEnds = warrantyEnds && !isNaN(new Date(warrantyEnds).getTime());
+    
+    if (noReturnsAllowed) {
+      if (hasValidWarrantyEnds) {
+        const warrantyDate = new Date(warrantyEnds);
+        const warrantyDaysLeft = Math.ceil((warrantyDate.getTime() - now.getTime()) / (1000 * 60 * 60 * 24));
+        if (warrantyDaysLeft > 0 && warrantyDaysLeft <= 30) {
+          return <Badge variant="secondary" className="text-xs" data-testid="badge-warranty-expiring">Warranty ends in {warrantyDaysLeft}d</Badge>;
+        }
+        if (warrantyDaysLeft > 0) {
+          return <Badge variant="outline" className="text-xs" data-testid="badge-warranty-only">Warranty active</Badge>;
+        }
+      }
+      return <Badge variant="outline" className="text-xs opacity-50" data-testid="badge-no-returns">No returns</Badge>;
+    }
+    
+    const returnDaysLeft = hasValidReturnBy 
+      ? Math.ceil((new Date(returnBy).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : -1;
+    const warrantyDaysLeft = hasValidWarrantyEnds 
+      ? Math.ceil((new Date(warrantyEnds).getTime() - now.getTime()) / (1000 * 60 * 60 * 24))
+      : -1;
 
+    // Active return period with urgency
     if (returnDaysLeft > 0 && returnDaysLeft <= 7) {
       return <Badge variant="destructive" className="text-xs" data-testid="badge-return-expiring">Return ending in {returnDaysLeft}d</Badge>;
     }
+    // Active warranty with urgency
     if (warrantyDaysLeft > 0 && warrantyDaysLeft <= 30) {
       return <Badge variant="secondary" className="text-xs" data-testid="badge-warranty-expiring">Warranty ends in {warrantyDaysLeft}d</Badge>;
     }
+    // Active return period
     if (returnDaysLeft > 0) {
       return <Badge variant="outline" className="text-xs" data-testid="badge-active">Active</Badge>;
     }
+    // Active warranty only
+    if (warrantyDaysLeft > 0) {
+      return <Badge variant="outline" className="text-xs" data-testid="badge-warranty-only">Warranty active</Badge>;
+    }
+    
+    // Both dates missing - check if any policy was specified
+    if (!hasValidReturnBy && !hasValidWarrantyEnds) {
+      // No policies detected at all - show "Policy unspecified"
+      if (hasReturnPolicy === false && hasWarrantyPolicy === false) {
+        return <Badge variant="outline" className="text-xs opacity-50" data-testid="badge-unspecified">Policy unspecified</Badge>;
+      }
+      // Policy exists but dates are missing (shouldn't happen normally, but handle it)
+      // This means returnPolicyDays or warrantyMonths was set but dates weren't computed
+      return <Badge variant="outline" className="text-xs opacity-50" data-testid="badge-unspecified">Not specified</Badge>;
+    }
+    
+    // Return date missing but warranty date exists (and expired since we got here)
+    if (!hasValidReturnBy && hasValidWarrantyEnds) {
+      // Warranty expired, return date never existed - check if return policy was detected
+      if (hasReturnPolicy === false) {
+        return <Badge variant="outline" className="text-xs opacity-50" data-testid="badge-expired">Expired</Badge>;
+      }
+      // Return policy exists but date missing - shouldn't happen normally
+      return <Badge variant="outline" className="text-xs opacity-50" data-testid="badge-expired">Expired</Badge>;
+    }
+    
+    // Both dates exist but are expired (we got here because both daysLeft <= 0)
     return <Badge variant="outline" className="text-xs opacity-50" data-testid="badge-expired">Expired</Badge>;
   };
 
@@ -220,110 +301,156 @@ export default function Receipts() {
                 <CardContent className="p-6">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
                     <div className="flex-1 space-y-3">
-                      <div className="flex items-start justify-between gap-4">
-                        <div>
-                          <div className="flex items-center gap-2 mb-2">
-                            <h3 className="text-lg font-semibold flex items-center gap-2" data-testid={`text-merchant-${purchase.id}`}>
-                              <Store className="h-5 w-5 text-muted-foreground" />
-                              {purchase.merchant}
-                            </h3>
-                            {getConfidenceBadge((purchase.ocrConfidence || 'low') as ConfidenceLevel)}
+                      <div className="space-y-3">
+                        <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-2 flex-wrap">
+                              <h3 className="text-lg font-semibold flex items-center gap-2 truncate" data-testid={`text-merchant-${purchase.id}`}>
+                                <Store className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                                <span className="truncate">{purchase.merchant}</span>
+                              </h3>
+                              {getConfidenceBadge((purchase.ocrConfidence || 'low') as ConfidenceLevel)}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+                              <span className="flex items-center gap-1" data-testid={`text-date-${purchase.id}`}>
+                                <Calendar className="h-4 w-4" />
+                                {new Date(purchase.date).toLocaleDateString()}
+                              </span>
+                              <span className="flex items-center gap-1" data-testid={`text-total-${purchase.id}`}>
+                                <Coins className="h-4 w-4" />
+                                R{purchase.total}
+                              </span>
+                            </div>
                           </div>
-                          <div className="flex flex-wrap items-center gap-3 mt-2 text-sm text-muted-foreground">
-                            <span className="flex items-center gap-1" data-testid={`text-date-${purchase.id}`}>
-                              <Calendar className="h-4 w-4" />
-                              {new Date(purchase.date).toLocaleDateString()}
-                            </span>
-                            <span className="flex items-center gap-1" data-testid={`text-total-${purchase.id}`}>
-                              <DollarSign className="h-4 w-4" />
-                              ${purchase.total}
-                            </span>
+                          <div className="flex items-center gap-2 flex-wrap sm:flex-nowrap sm:flex-col sm:items-end">
+                            {(() => {
+                              const policy = getPurchasePolicyInfo(purchase);
+                              return getStatusBadge(purchase.returnBy, purchase.warrantyEnds, purchase.refundType, policy.hasReturnPolicy, policy.hasWarrantyPolicy);
+                            })()}
+                            <Select
+                              value={purchase.category || "Other"}
+                              onValueChange={(value) => updateCategoryMutation.mutate({ id: purchase.id, category: value })}
+                            >
+                              <SelectTrigger className={`w-28 text-xs border ${getCategoryColor(purchase.category || "Other")}`} data-testid={`select-category-${purchase.id}`}>
+                                <Tag className="h-3 w-3 mr-1" />
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {CATEGORIES.map((cat) => (
+                                  <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}-${purchase.id}`}>
+                                    {cat}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
                           </div>
-                        </div>
-                        <div className="flex flex-col items-end gap-2">
-                          {getStatusBadge(purchase.returnBy, purchase.warrantyEnds)}
-                          <Select
-                            value={purchase.category || "Other"}
-                            onValueChange={(value) => updateCategoryMutation.mutate({ id: purchase.id, category: value })}
-                          >
-                            <SelectTrigger className={`w-32 text-xs border ${getCategoryColor(purchase.category || "Other")}`} data-testid={`select-category-${purchase.id}`}>
-                              <Tag className="h-3 w-3 mr-1" />
-                              <SelectValue />
-                            </SelectTrigger>
-                            <SelectContent>
-                              {CATEGORIES.map((cat) => (
-                                <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}-${purchase.id}`}>
-                                  {cat}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
                         </div>
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4 text-sm">
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
-                            Return By
-                          </p>
-                          <p className="flex items-center gap-1 mb-1" data-testid={`text-return-by-${purchase.id}`}>
-                            <Clock className="h-4 w-4" />
-                            {new Date(purchase.returnBy).toLocaleDateString()}
-                          </p>
-                          {(() => {
-                            const policy = getMerchantPolicyInfo(purchase.merchant, purchase.date);
-                            return (
+                      {(() => {
+                        const policy = getPurchasePolicyInfo(purchase);
+                        return (
+                          <div className="grid grid-cols-2 gap-4 text-sm">
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                                {purchase.refundType === 'none' ? 'Returns' : 'Return By'}
+                              </p>
+                              <p className="flex items-center gap-1 mb-1" data-testid={`text-return-by-${purchase.id}`}>
+                                <Clock className="h-4 w-4" />
+                                {purchase.refundType === 'none' 
+                                  ? 'No returns accepted'
+                                  : purchase.returnBy 
+                                    ? new Date(purchase.returnBy).toLocaleDateString()
+                                    : 'Not specified'}
+                              </p>
                               <p className="flex items-center gap-1 text-xs text-muted-foreground" data-testid={`text-return-policy-${purchase.id}`}>
                                 <Info className="h-3 w-3" />
-                                <span className={policy.hasCustomRule ? "text-primary font-medium" : ""}>
+                                <span className={policy.isCustom ? "text-primary font-medium" : ""}>
                                   {policy.returnLabel}
                                 </span>
                               </p>
-                            );
-                          })()}
-                        </div>
-                        <div>
-                          <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
-                            Warranty Until
-                          </p>
-                          <p className="flex items-center gap-1 mb-1" data-testid={`text-warranty-${purchase.id}`}>
-                            <Clock className="h-4 w-4" />
-                            {new Date(purchase.warrantyEnds).toLocaleDateString()}
-                          </p>
-                          {(() => {
-                            const policy = getMerchantPolicyInfo(purchase.merchant, purchase.date);
-                            return (
+                            </div>
+                            <div>
+                              <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1">
+                                Warranty Until
+                              </p>
+                              <p className="flex items-center gap-1 mb-1" data-testid={`text-warranty-${purchase.id}`}>
+                                <Clock className="h-4 w-4" />
+                                {purchase.warrantyEnds 
+                                  ? new Date(purchase.warrantyEnds).toLocaleDateString()
+                                  : 'Not specified'}
+                              </p>
                               <p className="flex items-center gap-1 text-xs text-muted-foreground" data-testid={`text-warranty-policy-${purchase.id}`}>
                                 <Info className="h-3 w-3" />
-                                <span className={policy.hasCustomRule ? "text-primary font-medium" : ""}>
+                                <span className={policy.isCustom ? "text-primary font-medium" : ""}>
                                   {policy.warrantyLabel}
                                 </span>
                               </p>
-                            );
-                          })()}
-                        </div>
-                      </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                     </div>
 
-                    <div className="flex md:flex-col gap-2">
-                      <Link href={`/claims?hash=${purchase.hash}`}>
-                        <Button variant="default" className="w-full" data-testid={`button-create-claim-${purchase.id}`}>
-                          Create Claim
-                          <ArrowRight className="ml-2 h-4 w-4" />
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-1 gap-2 w-full md:w-auto md:min-w-[120px]">
+                      <Link href={`/receipt/${purchase.id}`} className="w-full">
+                        <Button variant="outline" className="w-full text-sm" data-testid={`button-view-receipt-${purchase.id}`}>
+                          <Eye className="mr-1 h-4 w-4" />
+                          View
                         </Button>
                       </Link>
-                      <a href={`/api/purchases/${purchase.id}/pdf`} download>
-                        <Button variant="outline" className="w-full" data-testid={`button-download-pdf-${purchase.id}`}>
-                          <Download className="mr-2 h-4 w-4" />
-                          Download PDF
+                      <Link href={`/claims?hash=${purchase.hash}`} className="w-full">
+                        <Button variant="default" className="w-full text-sm" data-testid={`button-create-claim-${purchase.id}`}>
+                          Claim
+                          <ArrowRight className="ml-1 h-4 w-4" />
+                        </Button>
+                      </Link>
+                      <a href={`/api/purchases/${purchase.id}/pdf`} download className="w-full">
+                        <Button variant="outline" className="w-full text-sm" data-testid={`button-download-pdf-${purchase.id}`}>
+                          <Download className="mr-1 h-4 w-4" />
+                          Download
                         </Button>
                       </a>
+                      <Button 
+                        variant="outline" 
+                        className="w-full text-sm" 
+                        onClick={() => setViewingPdfId(purchase.id)}
+                        data-testid={`button-view-pdf-${purchase.id}`}
+                      >
+                        <FileText className="mr-1 h-4 w-4" />
+                        View PDF
+                      </Button>
                     </div>
                   </div>
                 </CardContent>
               </Card>
             ))}
           </div>
+        )}
+
+        {/* PDF Viewer Section */}
+        {viewingPdfId && (
+          <Card className="mt-6" data-testid="pdf-viewer-container">
+            <CardHeader className="flex flex-row items-center justify-between gap-4 pb-2">
+              <CardTitle className="text-lg">PDF Report</CardTitle>
+              <Button 
+                variant="outline" 
+                size="icon"
+                onClick={() => setViewingPdfId(null)}
+                data-testid="button-close-pdf"
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </CardHeader>
+            <CardContent>
+              <iframe
+                src={`/api/purchases/${viewingPdfId}/pdf`}
+                className="w-full h-[600px] border rounded-md"
+                title="Receipt PDF"
+                data-testid="iframe-pdf-viewer"
+              />
+            </CardContent>
+          </Card>
         )}
       </div>
     </div>

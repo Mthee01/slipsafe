@@ -31,6 +31,9 @@ import VerifyEmail from "@/pages/verify-email";
 import NotFound from "@/pages/not-found";
 import AdminDashboard from "@/pages/admin";
 import MerchantPortal from "@/pages/merchant-portal";
+import IntegratedMerchantPortal from "@/pages/integrated-merchant-portal";
+import ReceiptDetail from "@/pages/receipt-detail";
+import UpgradeToBusiness from "@/pages/upgrade-to-business";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
 function AppHeader() {
@@ -131,12 +134,15 @@ function AppContent() {
             <Switch>
               <Route path="/" component={Home} />
               <Route path="/receipts" component={Receipts} />
+              <Route path="/receipt/:id" component={ReceiptDetail} />
               <Route path="/claims" component={Claims} />
               <Route path="/reports" component={Reports} />
               <Route path="/settings" component={Settings} />
               <Route path="/profile" component={Profile} />
+              <Route path="/upgrade-to-business" component={UpgradeToBusiness} />
               <Route path="/admin" component={AdminDashboard} />
               <Route path="/merchant" component={MerchantPortal} />
+              <Route path="/merchant-portal" component={IntegratedMerchantPortal} />
               <Route path="/verify/:claimCode" component={MerchantPortal} />
               <Route path="/login">
                 <Redirect to="/" />

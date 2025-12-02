@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BarChart3, PieChart, TrendingUp, Receipt, DollarSign, Percent, Download, Calendar, Building2, UserCircle, Store, FileText, Loader2, RotateCcw, Shield, AlertTriangle, CheckCircle } from "lucide-react";
+import { BarChart3, PieChart, TrendingUp, Receipt, Coins, Percent, Download, Calendar, Building2, UserCircle, Store, FileText, Loader2, RotateCcw, Shield, AlertTriangle, CheckCircle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { Progress } from "@/components/ui/progress";
@@ -187,10 +187,10 @@ function PersonalReportsDashboard() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between gap-2 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">Total Spent</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
+              <Coins className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
-              <div className="text-2xl font-bold" data-testid="text-total-spent">${data.summary.totalSpent}</div>
+              <div className="text-2xl font-bold" data-testid="text-total-spent">R{data.summary.totalSpent}</div>
               <p className="text-xs text-muted-foreground mt-1">All purchases</p>
             </CardContent>
           </Card>
@@ -407,10 +407,10 @@ function PersonalReportsDashboard() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart data={monthlyChartData}>
                     <XAxis dataKey="month" tick={{ fontSize: 12 }} />
-                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `$${value}`} />
+                    <YAxis tick={{ fontSize: 12 }} tickFormatter={(value) => `R${value}`} />
                     <Tooltip 
                       formatter={(value: number, name: string) => [
-                        name === "spent" ? `$${value.toFixed(2)}` : value,
+                        name === "spent" ? `R${value.toFixed(2)}` : value,
                         name === "spent" ? "Amount" : "Receipts"
                       ]}
                     />
@@ -459,7 +459,7 @@ function PersonalReportsDashboard() {
                         </div>
                       </TableCell>
                       <TableCell className="text-right">{cat.count}</TableCell>
-                      <TableCell className="text-right font-medium">${cat.total}</TableCell>
+                      <TableCell className="text-right font-medium">R{cat.total}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -488,7 +488,7 @@ function PersonalReportsDashboard() {
                 </div>
               </div>
               <Button asChild>
-                <a href="/profile" data-testid="button-upgrade-account">
+                <a href="/upgrade-to-business" data-testid="button-upgrade-account">
                   Upgrade Account
                 </a>
               </Button>
@@ -659,7 +659,7 @@ export default function Reports() {
               </h1>
               <Badge variant={isBusinessContext ? "default" : "secondary"} data-testid="badge-context">
                 {isBusinessContext ? (
-                  <><Building2 className="h-3 w-3 mr-1" /> Business</>
+                  <><Building2 className="h-3 w-3 mr-1" /> {user?.businessName || user?.businessProfile?.businessName || "Business"}</>
                 ) : (
                   <><UserCircle className="h-3 w-3 mr-1" /> Personal</>
                 )}
@@ -755,7 +755,7 @@ export default function Reports() {
           <Card>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
               <CardTitle className="text-sm font-medium">Total Spent</CardTitle>
-              <DollarSign className="h-4 w-4 text-muted-foreground" />
+              <Coins className="h-4 w-4 text-muted-foreground" />
             </CardHeader>
             <CardContent>
               <div className="text-2xl font-bold" data-testid="text-total-spent">

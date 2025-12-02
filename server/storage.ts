@@ -60,6 +60,7 @@ export interface IStorage {
   getActivityStats(): Promise<{ totalUsers: number; totalReceipts: number; totalClaims: number; recentLogins: number }>;
   getAllUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: string): Promise<User | undefined>;
+  updateUserMerchantId(userId: string, merchantId: string | null): Promise<User | undefined>;
   
   // Admin methods with pagination
   getUserActivity(userId: string, page: number, limit: number): Promise<{ activities: UserActivity[]; total: number; page: number; limit: number; totalPages: number }>;
@@ -126,7 +127,7 @@ export class DatabaseStorage implements IStorage {
   async createUser(insertUser: InsertUser): Promise<User> {
     const [user] = await db.insert(users).values({
       ...insertUser,
-      email: insertUser.email || null,
+      email: insertUser.email,
       phone: insertUser.phone ? normalizePhone(insertUser.phone) : null,
       homeAddress: insertUser.homeAddress || null,
       idNumber: insertUser.idNumber || null,
@@ -163,6 +164,14 @@ export class DatabaseStorage implements IStorage {
   async updateUserContext(userId: string, context: string): Promise<User | undefined> {
     const [user] = await db.update(users)
       .set({ activeContext: context })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateAccountType(userId: string, accountType: string): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set({ accountType })
       .where(eq(users.id, userId))
       .returning();
     return user;
@@ -301,7 +310,8 @@ export class DatabaseStorage implements IStorage {
       throw new Error(`Purchase userId mismatch: payload has "${insertPurchase.userId}" but authenticated user is "${userId}"`);
     }
     
-    const existing = await this.getPurchaseByHash(insertPurchase.hash);
+    // Check if THIS USER already has a purchase with this hash (not globally)
+    const existing = await this.getPurchaseByUserAndHash(userId, insertPurchase.hash);
     if (existing) {
       return existing;
     }
@@ -319,6 +329,12 @@ export class DatabaseStorage implements IStorage {
       vatAmount: insertPurchase.vatAmount || null,
       notes: insertPurchase.notes || null,
     }).returning();
+    return purchase;
+  }
+
+  async getPurchaseByUserAndHash(userId: string, hash: string): Promise<Purchase | undefined> {
+    const [purchase] = await db.select().from(purchases)
+      .where(and(eq(purchases.userId, userId), eq(purchases.hash, hash)));
     return purchase;
   }
 
@@ -531,6 +547,14 @@ export class DatabaseStorage implements IStorage {
   async updateUserRole(userId: string, role: string): Promise<User | undefined> {
     const [user] = await db.update(users)
       .set({ role })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserMerchantId(userId: string, merchantId: string | null): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set({ merchantId })
       .where(eq(users.id, userId))
       .returning();
     return user;

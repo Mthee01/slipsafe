@@ -6,7 +6,7 @@ import { z } from "zod";
 export const ACCOUNT_TYPES = ["individual", "business"] as const;
 export type AccountType = typeof ACCOUNT_TYPES[number];
 
-export const USER_ROLES = ["user", "admin"] as const;
+export const USER_ROLES = ["user", "admin", "support", "merchant_admin", "merchant_staff"] as const;
 export type UserRole = typeof USER_ROLES[number];
 
 export const users = pgTable("users", {
@@ -23,6 +23,7 @@ export const users = pgTable("users", {
   accountType: text("account_type").notNull().default("individual"),
   activeContext: text("active_context").notNull().default("personal"),
   role: text("role").notNull().default("user"),
+  merchantId: varchar("merchant_id"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -187,7 +188,7 @@ export type ConfidenceLevel = typeof CONFIDENCE_LEVELS[number];
 export const SOURCE_TYPES = ["camera", "upload", "email_paste"] as const;
 export type SourceType = typeof SOURCE_TYPES[number];
 
-export const REFUND_TYPES = ["full", "store_credit", "exchange_only", "partial", "none"] as const;
+export const REFUND_TYPES = ["not_specified", "full", "store_credit", "exchange_only", "partial", "none"] as const;
 export type RefundType = typeof REFUND_TYPES[number];
 
 export const POLICY_SOURCES = ["extracted", "user_entered", "merchant_default"] as const;
@@ -196,12 +197,12 @@ export type PolicySource = typeof POLICY_SOURCES[number];
 export const purchases = pgTable("purchases", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull(),
-  hash: text("hash").notNull().unique(),
+  hash: text("hash").notNull(),
   merchant: text("merchant").notNull(),
   date: text("date").notNull(),
   total: numeric("total").notNull(),
-  returnBy: text("return_by").notNull(),
-  warrantyEnds: text("warranty_ends").notNull(),
+  returnBy: text("return_by"),
+  warrantyEnds: text("warranty_ends"),
   category: text("category").notNull().default("Other"),
   imagePath: text("image_path"),
   ocrConfidence: text("ocr_confidence").notNull().default("low"),
@@ -222,7 +223,9 @@ export const purchases = pgTable("purchases", {
   warrantyTerms: text("warranty_terms"),
   policySource: text("policy_source").default("merchant_default"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (table) => ({
+  userHashUnique: unique().on(table.userId, table.hash),
+}));
 
 export const insertPurchaseSchema = createInsertSchema(purchases).omit({
   id: true,
@@ -399,6 +402,7 @@ export const ACTIVITY_TYPES = [
   "password_change",
   "business_profile_update",
   "report_generated",
+  "admin_role_change",
 ] as const;
 export type ActivityType = typeof ACTIVITY_TYPES[number];
 
