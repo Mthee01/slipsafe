@@ -230,7 +230,7 @@ export default function Register() {
                   <h3 className="text-sm font-semibold">Personal Information</h3>
                   
                   <div className="space-y-2">
-                    <Label htmlFor="idNumber">ID Number</Label>
+                    <Label htmlFor="idNumber">ID Number <span className="text-muted-foreground font-normal">(Optional)</span></Label>
                     <Input
                       id="idNumber"
                       data-testid="input-id-number"
@@ -244,7 +244,7 @@ export default function Register() {
                   </div>
 
                   <div className="space-y-2">
-                    <Label htmlFor="homeAddress">Home Address</Label>
+                    <Label htmlFor="homeAddress">Home Address <span className="text-muted-foreground font-normal">(Optional)</span></Label>
                     <Input
                       id="homeAddress"
                       data-testid="input-home-address"
