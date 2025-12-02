@@ -26,36 +26,42 @@ const menuItems = [
     url: "/",
     icon: Home,
     testId: "nav-upload",
+    businessOnly: false,
   },
   {
     title: "Receipts",
     url: "/receipts",
     icon: FileText,
     testId: "nav-receipts",
+    businessOnly: false,
   },
   {
     title: "Claims",
     url: "/claims",
     icon: QrCode,
     testId: "nav-claims",
+    businessOnly: false,
   },
   {
     title: "Reports",
     url: "/reports",
     icon: BarChart3,
     testId: "nav-reports",
+    businessOnly: false,
   },
   {
     title: "Settings",
     url: "/settings",
     icon: Settings,
     testId: "nav-settings",
+    businessOnly: false,
   },
   {
     title: "Profile",
     url: "/profile",
     icon: User,
     testId: "nav-profile",
+    businessOnly: false,
   },
 ];
 
@@ -97,6 +103,8 @@ export function AppSidebar() {
 
   const isBusiness = user?.accountType === "business";
   const isBusinessContext = user?.activeContext === "business";
+
+  const filteredMenuItems = menuItems.filter(item => !item.businessOnly || isBusiness);
 
   const handleContextSwitch = () => {
     const newContext = isBusinessContext ? "personal" : "business";
@@ -154,7 +162,7 @@ export function AppSidebar() {
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
-              {menuItems.map((item) => (
+              {filteredMenuItems.map((item) => (
                 <SidebarMenuItem key={item.title}>
                   <SidebarMenuButton asChild isActive={location === item.url}>
                     <Link href={item.url} data-testid={item.testId} onClick={handleMenuItemClick}>

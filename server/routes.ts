@@ -8,7 +8,7 @@ import jwt from "jsonwebtoken";
 import passport from "./auth";
 import { hashPassword, isAuthenticated, getCurrentUserId } from "./auth";
 import { storage } from "./storage";
-import { insertPurchaseSchema, insertSettingsSchema, insertUserSchema, updateUserProfileSchema, updateBusinessProfileSchema, changePasswordSchema, forgotUsernameSchema, forgotPasswordSchema, resetPasswordSchema, registerSchema, CATEGORIES, insertMerchantRuleSchema, updateMerchantRuleSchema, type ActivityType } from "@shared/schema";
+import { insertPurchaseSchema, insertSettingsSchema, insertUserSchema, updateUserProfileSchema, updateBusinessProfileSchema, changePasswordSchema, forgotUsernameSchema, forgotPasswordSchema, resetPasswordSchema, registerSchema, CATEGORIES, insertMerchantRuleSchema, updateMerchantRuleSchema, type ActivityType, insertMerchantSchema, insertMerchantUserSchema, merchantLoginSchema, createClaimSchema, verifyClaimSchema, redeemClaimSchema, updatePurchasePoliciesSchema } from "@shared/schema";
 import { comparePassword } from "./auth";
 import { randomBytes } from "crypto";
 import { processReceipt } from "./lib/ocr";
@@ -41,15 +41,31 @@ const JWT_SECRET = process.env.JWT_SECRET || "slipsafe_dev_secret";
 const rateLimitStore = new Map<string, { count: number; resetAt: number }>();
 
 // In-memory cache for OCR preview data (keyed by userId)
+interface PolicyPreview {
+  returnPolicyDays: number | null;
+  returnPolicyTerms: string | null;
+  refundType: 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
+  exchangePolicyDays: number | null;
+  exchangePolicyTerms: string | null;
+  warrantyMonths: number | null;
+  warrantyTerms: string | null;
+  policySource: 'extracted' | 'user_entered' | 'merchant_default';
+}
+
 interface PreviewData {
   merchant: string;
   date: string;
   total: string;
   returnBy: string;
   warrantyEnds: string;
-  confidence: 'low' | 'medium' | 'high';
+  confidence: 'low' | 'medium' | 'high' | number;
   rawText: string;
-  imagePath: string;
+  imagePath: string | null;
+  sourceType: 'camera' | 'upload' | 'email_paste';
+  policies: PolicyPreview;
+  vatAmount: number | null;
+  vatSource: 'extracted' | 'calculated' | 'none';
+  invoiceNumber: string | null;
   timestamp: number;
 }
 const ocrPreviewCache = new Map<string, PreviewData>();
@@ -908,6 +924,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         confidence: ocrResult.confidence,
         rawText: ocrResult.rawText,
         imagePath: req.file.path,
+        sourceType: "upload",
+        policies: ocrResult.policies,
+        vatAmount: ocrResult.vatAmount,
+        vatSource: ocrResult.vatSource,
+        invoiceNumber: ocrResult.invoiceNumber,
         timestamp: Date.now()
       };
       ocrPreviewCache.set(userId, previewData);
@@ -926,7 +947,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           warnings: ocrResult.warnings,
           hasPartialData: ocrResult.error?.type === 'PARTIAL_EXTRACTION',
           partialDataMessage: ocrResult.error?.message,
-          partialDataSuggestion: ocrResult.error?.suggestion
+          partialDataSuggestion: ocrResult.error?.suggestion,
+          // Policy data extracted from receipt
+          policies: ocrResult.policies,
+          vatAmount: ocrResult.vatAmount,
+          vatSource: ocrResult.vatSource,
+          invoiceNumber: ocrResult.invoiceNumber
         }
       });
     } catch (error: any) {
@@ -988,6 +1014,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Compute deadlines with merchant-specific rules
       const deadlines = await computeDeadlines(normalizedDate, userId, normalizedMerchant);
 
+      // Normalize confidence to string (schema expects "low" | "medium" | "high")
+      let confidenceStr: string;
+      if (typeof previewData.confidence === 'number') {
+        confidenceStr = previewData.confidence >= 0.7 ? 'high' : previewData.confidence >= 0.4 ? 'medium' : 'low';
+      } else {
+        confidenceStr = previewData.confidence;
+      }
+
+      // Get policies from request body (user may have edited) or from preview data (extracted)
+      const policies = req.body.policies || previewData.policies || {};
+      
       const purchaseData = {
         userId,
         hash,
@@ -997,9 +1034,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
         returnBy: deadlines.returnBy,
         warrantyEnds: deadlines.warrantyEnds,
         category: category || "Other",
-        imagePath: previewData.imagePath, // Use server-side stored path
-        ocrConfidence: previewData.confidence, // Use original OCR confidence
-        context, // Use user's active context (personal or business)
+        imagePath: previewData.imagePath,
+        ocrConfidence: confidenceStr,
+        sourceType: previewData.sourceType || "upload",
+        context,
+        // Policy fields
+        returnPolicyDays: policies.returnPolicyDays ?? null,
+        returnPolicyTerms: policies.returnPolicyTerms ?? null,
+        refundType: policies.refundType ?? null,
+        exchangePolicyDays: policies.exchangePolicyDays ?? null,
+        exchangePolicyTerms: policies.exchangePolicyTerms ?? null,
+        warrantyMonths: policies.warrantyMonths ?? null,
+        warrantyTerms: policies.warrantyTerms ?? null,
+        policySource: policies.policySource || 'merchant_default',
+        // VAT fields
+        vatAmount: previewData.vatAmount?.toString() ?? null,
+        invoiceNumber: previewData.invoiceNumber ?? null,
       };
 
       const validatedData = insertPurchaseSchema.parse(purchaseData);
@@ -1020,6 +1070,178 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Validation failed", message: error.message });
       }
       res.status(500).json({ error: "Failed to save receipt", message: error.message });
+    }
+  });
+
+  app.post("/api/receipts/text", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const { text, source } = req.body;
+
+      if (!text || typeof text !== 'string') {
+        return res.status(400).json({ error: "Text content is required" });
+      }
+
+      if (text.trim().length < 20) {
+        return res.status(400).json({ 
+          error: "Text too short",
+          message: "Please paste the complete email receipt content"
+        });
+      }
+
+      const { parseEmailReceiptText } = await import('./lib/ocr');
+      const parseResult = parseEmailReceiptText(text);
+
+      const merchant = parseResult.merchant?.trim() || null;
+      let isoDate: string | null = null;
+      
+      if (parseResult.date) {
+        isoDate = parseDateToISO(parseResult.date);
+      }
+      
+      const total = parseResult.total;
+
+      let deadlines: { returnBy: string | null; warrantyEnds: string | null } = { returnBy: null, warrantyEnds: null };
+      if (isoDate && merchant) {
+        deadlines = await computeDeadlines(isoDate, userId, merchant);
+      }
+
+      ocrPreviewCache.set(userId, {
+        merchant: merchant || "Unknown Merchant",
+        date: isoDate || "",
+        total: total?.toString() || "0.00",
+        returnBy: deadlines.returnBy || "",
+        warrantyEnds: deadlines.warrantyEnds || "",
+        confidence: parseResult.confidence,
+        rawText: text,
+        imagePath: null,
+        sourceType: 'email_paste',
+        policies: parseResult.policies,
+        vatAmount: parseResult.vatAmount,
+        vatSource: parseResult.vatSource,
+        invoiceNumber: parseResult.invoiceNumber,
+        timestamp: Date.now()
+      });
+
+      res.json({
+        success: true,
+        ocrData: {
+          merchant,
+          date: isoDate,
+          total,
+          returnBy: deadlines.returnBy,
+          warrantyEnds: deadlines.warrantyEnds,
+          confidence: parseResult.confidence,
+          rawText: parseResult.rawText,
+          ocrConfidence: parseResult.ocrConfidence,
+          warnings: parseResult.warnings,
+          hasPartialData: parseResult.error?.type === 'PARTIAL_EXTRACTION',
+          partialDataMessage: parseResult.error?.message,
+          partialDataSuggestion: parseResult.error?.suggestion,
+          sourceType: source || 'email_paste',
+          // Policy data extracted from email
+          policies: parseResult.policies,
+          vatAmount: parseResult.vatAmount,
+          vatSource: parseResult.vatSource,
+          invoiceNumber: parseResult.invoiceNumber
+        }
+      });
+    } catch (error: any) {
+      console.error("Email receipt parsing error:", error);
+      res.status(500).json({ 
+        success: false,
+        error: "Failed to parse email receipt", 
+        message: error.message,
+        suggestion: "Please check that you've pasted the complete email content.",
+        canRetry: true
+      });
+    }
+  });
+
+  // Update receipt policies (return/refund/exchange/warranty)
+  app.patch("/api/receipts/:id/policies", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const purchaseId = req.params.id;
+      
+      // Verify user owns this purchase
+      const purchase = await storage.getPurchaseById(userId, purchaseId);
+      if (!purchase) {
+        return res.status(404).json({ error: "Receipt not found" });
+      }
+
+      // Validate policy updates
+      const validationResult = updatePurchasePoliciesSchema.safeParse(req.body);
+      if (!validationResult.success) {
+        return res.status(400).json({ 
+          error: "Validation failed", 
+          details: validationResult.error.errors 
+        });
+      }
+
+      const policyUpdates = validationResult.data;
+      
+      // Mark as user_entered if coming from user edit
+      const updates = {
+        ...policyUpdates,
+        policySource: 'user_entered' as const,
+      };
+
+      const updatedPurchase = await storage.updatePurchase(userId, purchaseId, updates);
+      
+      if (!updatedPurchase) {
+        return res.status(500).json({ error: "Failed to update policies" });
+      }
+
+      res.json({
+        success: true,
+        purchase: updatedPurchase
+      });
+    } catch (error: any) {
+      console.error("Policy update error:", error);
+      res.status(500).json({ error: "Failed to update policies", message: error.message });
+    }
+  });
+
+  // Get receipt policies
+  app.get("/api/receipts/:id/policies", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req);
+      if (!userId) {
+        return res.status(401).json({ error: "Unauthorized" });
+      }
+
+      const purchaseId = req.params.id;
+      const purchase = await storage.getPurchaseById(userId, purchaseId);
+      
+      if (!purchase) {
+        return res.status(404).json({ error: "Receipt not found" });
+      }
+
+      res.json({
+        success: true,
+        policies: {
+          returnPolicyDays: purchase.returnPolicyDays,
+          returnPolicyTerms: purchase.returnPolicyTerms,
+          refundType: purchase.refundType,
+          exchangePolicyDays: purchase.exchangePolicyDays,
+          exchangePolicyTerms: purchase.exchangePolicyTerms,
+          warrantyMonths: purchase.warrantyMonths,
+          warrantyTerms: purchase.warrantyTerms,
+          policySource: purchase.policySource,
+        }
+      });
+    } catch (error: any) {
+      console.error("Get policies error:", error);
+      res.status(500).json({ error: "Failed to get policies", message: error.message });
     }
   });
 
@@ -1791,6 +2013,755 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Admin user activity fetch error:", error);
       res.status(500).json({ error: "Failed to fetch user activity", message: error.message });
+    }
+  });
+
+  // ============================================
+  // MERCHANT VERIFICATION SYSTEM ROUTES
+  // ============================================
+
+  // Generate a unique API key for merchants
+  function generateApiKey(): string {
+    return `slp_${randomBytes(32).toString('hex')}`;
+  }
+
+  // Generate a claim code (alphanumeric, easy to read)
+  function generateClaimCode(): string {
+    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    let code = '';
+    for (let i = 0; i < 8; i++) {
+      code += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return code;
+  }
+
+  // Middleware for merchant API key authentication
+  const merchantApiAuth = async (req: Request, res: express.Response, next: express.NextFunction) => {
+    const apiKey = req.headers['x-api-key'] as string;
+    if (!apiKey) {
+      return res.status(401).json({ error: "API key required" });
+    }
+    
+    const merchant = await storage.getMerchantByApiKey(apiKey);
+    if (!merchant || !merchant.isActive) {
+      return res.status(401).json({ error: "Invalid or inactive API key" });
+    }
+    
+    (req as any).merchant = merchant;
+    next();
+  };
+
+  // Session-based merchant user authentication
+  const merchantSession = new Map<string, { merchantId: string; userId: string; expiresAt: number }>();
+
+  const merchantSessionAuth = async (req: Request, res: express.Response, next: express.NextFunction) => {
+    const sessionToken = req.headers['x-merchant-session'] as string;
+    if (!sessionToken) {
+      return res.status(401).json({ error: "Session token required" });
+    }
+    
+    const session = merchantSession.get(sessionToken);
+    if (!session || session.expiresAt < Date.now()) {
+      merchantSession.delete(sessionToken);
+      return res.status(401).json({ error: "Session expired or invalid" });
+    }
+    
+    const merchantUser = await storage.getMerchantUserById(session.userId);
+    if (!merchantUser || !merchantUser.isActive) {
+      return res.status(401).json({ error: "User not found or inactive" });
+    }
+    
+    const merchant = await storage.getMerchantById(session.merchantId);
+    if (!merchant || !merchant.isActive) {
+      return res.status(401).json({ error: "Merchant not found or inactive" });
+    }
+    
+    (req as any).merchant = merchant;
+    (req as any).merchantUser = merchantUser;
+    next();
+  };
+
+  // Register a new merchant
+  app.post("/api/merchant/register", async (req, res) => {
+    try {
+      const validatedData = insertMerchantSchema.parse(req.body);
+      
+      const existing = await storage.getMerchantByEmail(validatedData.email);
+      if (existing) {
+        return res.status(400).json({ error: "A merchant with this email already exists" });
+      }
+      
+      const apiKey = generateApiKey();
+      const apiKeyHash = createHash('sha256').update(apiKey).digest('hex');
+      
+      const merchant = await storage.createMerchant(validatedData, apiKey, apiKeyHash);
+      
+      // Create owner user account
+      const ownerPassword = await hashPassword(req.body.password || randomBytes(16).toString('hex'));
+      await storage.createMerchantUser({
+        merchantId: merchant.id,
+        email: validatedData.email,
+        password: ownerPassword,
+        fullName: req.body.ownerName || validatedData.businessName,
+        role: "owner",
+        isActive: true,
+      });
+      
+      res.status(201).json({
+        success: true,
+        merchant: {
+          id: merchant.id,
+          businessName: merchant.businessName,
+          email: merchant.email,
+        },
+        apiKey,
+        message: "Store this API key securely - it won't be shown again"
+      });
+    } catch (error: any) {
+      console.error("Merchant registration error:", error);
+      res.status(400).json({ error: error.message || "Failed to register merchant" });
+    }
+  });
+
+  // Merchant user login
+  app.post("/api/merchant/login", async (req, res) => {
+    try {
+      const validatedData = merchantLoginSchema.parse(req.body);
+      
+      const identifier = `merchant_login:${validatedData.email}`;
+      if (!rateLimit(identifier, 5, 15 * 60 * 1000)) {
+        return res.status(429).json({ error: "Too many login attempts. Try again later." });
+      }
+      
+      const merchant = await storage.getMerchantById(validatedData.merchantId);
+      if (!merchant || !merchant.isActive) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      
+      const user = await storage.getMerchantUserByEmail(merchant.id, validatedData.email);
+      if (!user || !user.isActive) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      
+      const passwordValid = await comparePassword(validatedData.password, user.password);
+      if (!passwordValid) {
+        return res.status(401).json({ error: "Invalid credentials" });
+      }
+      
+      // Create session
+      const sessionToken = randomBytes(32).toString('hex');
+      const expiresAt = Date.now() + (8 * 60 * 60 * 1000); // 8 hours
+      merchantSession.set(sessionToken, {
+        merchantId: merchant.id,
+        userId: user.id,
+        expiresAt
+      });
+      
+      await storage.updateMerchantUserLogin(user.id);
+      
+      res.json({
+        success: true,
+        sessionToken,
+        expiresAt,
+        user: {
+          id: user.id,
+          email: user.email,
+          fullName: user.fullName,
+          role: user.role,
+        },
+        merchant: {
+          id: merchant.id,
+          businessName: merchant.businessName,
+        }
+      });
+    } catch (error: any) {
+      console.error("Merchant login error:", error);
+      res.status(400).json({ error: error.message || "Login failed" });
+    }
+  });
+
+  // Merchant logout
+  app.post("/api/merchant/logout", merchantSessionAuth, (req, res) => {
+    const sessionToken = req.headers['x-merchant-session'] as string;
+    merchantSession.delete(sessionToken);
+    res.json({ success: true });
+  });
+
+  // Get merchant dashboard info
+  app.get("/api/merchant/dashboard", merchantSessionAuth, async (req, res) => {
+    try {
+      const merchant = (req as any).merchant;
+      const verifications = await storage.getVerificationsByMerchant(merchant.id, 20);
+      const staff = await storage.getMerchantUsers(merchant.id);
+      
+      res.json({
+        merchant: {
+          id: merchant.id,
+          businessName: merchant.businessName,
+          email: merchant.email,
+          returnPolicyDays: merchant.returnPolicyDays,
+          warrantyMonths: merchant.warrantyMonths,
+        },
+        recentVerifications: verifications,
+        staffCount: staff.length,
+      });
+    } catch (error: any) {
+      console.error("Merchant dashboard error:", error);
+      res.status(500).json({ error: "Failed to fetch dashboard" });
+    }
+  });
+
+  // Manage merchant staff
+  app.get("/api/merchant/staff", merchantSessionAuth, async (req, res) => {
+    try {
+      const merchant = (req as any).merchant;
+      const staff = await storage.getMerchantUsers(merchant.id);
+      res.json({
+        staff: staff.map(s => ({
+          id: s.id,
+          email: s.email,
+          fullName: s.fullName,
+          role: s.role,
+          isActive: s.isActive,
+          lastLoginAt: s.lastLoginAt,
+        }))
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch staff" });
+    }
+  });
+
+  app.post("/api/merchant/staff", merchantSessionAuth, async (req, res) => {
+    try {
+      const merchantUser = (req as any).merchantUser;
+      if (merchantUser.role !== 'owner' && merchantUser.role !== 'manager') {
+        return res.status(403).json({ error: "Only owners and managers can add staff" });
+      }
+      
+      const merchant = (req as any).merchant;
+      const validatedData = insertMerchantUserSchema.parse({
+        ...req.body,
+        merchantId: merchant.id,
+      });
+      
+      const existing = await storage.getMerchantUserByEmail(merchant.id, validatedData.email);
+      if (existing) {
+        return res.status(400).json({ error: "A user with this email already exists" });
+      }
+      
+      const hashedPassword = await hashPassword(validatedData.password);
+      const staff = await storage.createMerchantUser({
+        ...validatedData,
+        password: hashedPassword,
+      });
+      
+      res.status(201).json({
+        success: true,
+        staff: {
+          id: staff.id,
+          email: staff.email,
+          fullName: staff.fullName,
+          role: staff.role,
+        }
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to add staff" });
+    }
+  });
+
+  // ============================================
+  // CLAIM MANAGEMENT ROUTES (User-facing)
+  // ============================================
+
+  // Create a claim for a purchase
+  app.post("/api/claims", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req)!;
+      const validatedData = createClaimSchema.parse(req.body);
+      
+      // Get the purchase
+      const purchase = await storage.getPurchaseById(userId, validatedData.purchaseId);
+      if (!purchase) {
+        return res.status(404).json({ error: "Purchase not found" });
+      }
+      
+      // Check if claim already exists for this purchase
+      const existingClaims = await storage.getClaimsByPurchase(purchase.id);
+      const activeClaim = existingClaims.find(c => 
+        c.state === 'issued' || c.state === 'pending' || c.state === 'partial'
+      );
+      if (activeClaim) {
+        return res.status(400).json({ 
+          error: "An active claim already exists for this purchase",
+          existingClaimCode: activeClaim.claimCode
+        });
+      }
+      
+      // Calculate expiry based on claim type
+      let expiresAt: Date;
+      if (validatedData.claimType === 'return') {
+        const returnByDate = new Date(purchase.returnBy);
+        if (returnByDate < new Date()) {
+          return res.status(400).json({ error: "Return period has expired" });
+        }
+        expiresAt = returnByDate;
+      } else if (validatedData.claimType === 'warranty') {
+        const warrantyDate = new Date(purchase.warrantyEnds);
+        if (warrantyDate < new Date()) {
+          return res.status(400).json({ error: "Warranty period has expired" });
+        }
+        expiresAt = warrantyDate;
+      } else {
+        expiresAt = new Date(Date.now() + 90 * 24 * 60 * 60 * 1000); // 90 days
+      }
+      
+      const claimCode = generateClaimCode();
+      const pin = generatePIN();
+      
+      // Generate QR code with verification URL
+      const verificationUrl = `${req.protocol}://${req.get('host')}/verify/${claimCode}`;
+      const qrCodeData = await QRCode.toDataURL(verificationUrl);
+      
+      const claim = await storage.createClaim(
+        {
+          purchaseId: purchase.id,
+          userId,
+          claimType: validatedData.claimType,
+          originalAmount: purchase.total,
+          merchantName: purchase.merchant,
+          purchaseDate: purchase.date,
+          expiresAt,
+        },
+        claimCode,
+        pin,
+        qrCodeData
+      );
+      
+      await logUserActivity(userId, "claim_create", {
+        claimId: claim.id,
+        claimCode,
+        purchaseId: purchase.id,
+        claimType: validatedData.claimType,
+      }, req);
+      
+      res.status(201).json({
+        success: true,
+        claim: {
+          id: claim.id,
+          claimCode,
+          pin,
+          qrCodeData,
+          claimType: claim.claimType,
+          merchantName: claim.merchantName,
+          originalAmount: claim.originalAmount,
+          expiresAt: claim.expiresAt,
+          state: claim.state,
+        }
+      });
+    } catch (error: any) {
+      console.error("Claim creation error:", error);
+      res.status(400).json({ error: error.message || "Failed to create claim" });
+    }
+  });
+
+  // Get user's claims
+  app.get("/api/claims", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req)!;
+      const claims = await storage.getClaimsByUser(userId);
+      
+      res.json({
+        claims: claims.map(c => ({
+          id: c.id,
+          claimCode: c.claimCode,
+          claimType: c.claimType,
+          state: c.state,
+          merchantName: c.merchantName,
+          originalAmount: c.originalAmount,
+          redeemedAmount: c.redeemedAmount,
+          purchaseDate: c.purchaseDate,
+          expiresAt: c.expiresAt,
+          redeemedAt: c.redeemedAt,
+          createdAt: c.createdAt,
+        }))
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch claims" });
+    }
+  });
+
+  // Get specific claim with QR code
+  app.get("/api/claims/:claimCode", isAuthenticated, async (req, res) => {
+    try {
+      const userId = getCurrentUserId(req)!;
+      const { claimCode } = req.params;
+      
+      const claim = await storage.getClaimByCode(claimCode);
+      if (!claim || claim.userId !== userId) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      
+      res.json({
+        claim: {
+          id: claim.id,
+          claimCode: claim.claimCode,
+          pin: claim.pin,
+          qrCodeData: claim.qrCodeData,
+          claimType: claim.claimType,
+          state: claim.state,
+          merchantName: claim.merchantName,
+          originalAmount: claim.originalAmount,
+          redeemedAmount: claim.redeemedAmount,
+          purchaseDate: claim.purchaseDate,
+          expiresAt: claim.expiresAt,
+          redeemedAt: claim.redeemedAt,
+        }
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch claim" });
+    }
+  });
+
+  // ============================================
+  // CLAIM VERIFICATION ROUTES (Merchant-facing)
+  // ============================================
+
+  // Public verification lookup (from QR code scan)
+  app.get("/api/verify/:claimCode", async (req, res) => {
+    try {
+      const { claimCode } = req.params;
+      const claim = await storage.getClaimByCode(claimCode);
+      
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found", valid: false });
+      }
+      
+      const isExpired = new Date(claim.expiresAt) < new Date();
+      const isUsed = claim.state === 'redeemed' || claim.state === 'refused';
+      
+      res.json({
+        valid: !isExpired && !isUsed,
+        claim: {
+          claimCode: claim.claimCode,
+          claimType: claim.claimType,
+          state: claim.state,
+          merchantName: claim.merchantName,
+          originalAmount: claim.originalAmount,
+          purchaseDate: claim.purchaseDate,
+          expiresAt: claim.expiresAt,
+          isExpired,
+          isUsed,
+        },
+        requiresPin: true,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Verification failed" });
+    }
+  });
+
+  // Verify claim with PIN (merchant API or portal)
+  app.post("/api/merchant/verify", merchantSessionAuth, async (req, res) => {
+    try {
+      const validatedData = verifyClaimSchema.parse(req.body);
+      const merchant = (req as any).merchant;
+      const merchantUser = (req as any).merchantUser;
+      
+      const claim = await storage.getClaimByCode(validatedData.claimCode);
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found", valid: false });
+      }
+      
+      // Check for too many failed PIN attempts (fraud prevention)
+      const failedAttempts = await storage.getFailedPinAttempts(claim.id, 15);
+      if (failedAttempts >= 5) {
+        await storage.createFraudEvent({
+          claimId: claim.id,
+          userId: claim.userId,
+          eventType: "invalid_pin_attempts",
+          severity: "high",
+          description: `Multiple failed PIN attempts (${failedAttempts + 1}) for claim ${claim.claimCode}`,
+          metadata: JSON.stringify({ merchantId: merchant.id }),
+        });
+        return res.status(429).json({ 
+          error: "Too many failed attempts. Claim locked for security.",
+          valid: false 
+        });
+      }
+      
+      const pinCorrect = claim.pin === validatedData.pin;
+      
+      // Log verification attempt
+      await storage.createClaimVerification({
+        claimId: claim.id,
+        merchantId: merchant.id,
+        merchantUserId: merchantUser.id,
+        result: pinCorrect ? "approved" : "rejected",
+        attemptedPin: validatedData.pin,
+        pinCorrect,
+        ipAddress: req.ip || req.socket?.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+      
+      if (!pinCorrect) {
+        return res.status(401).json({ error: "Invalid PIN", valid: false });
+      }
+      
+      const isExpired = new Date(claim.expiresAt) < new Date();
+      if (isExpired) {
+        await storage.createFraudEvent({
+          claimId: claim.id,
+          userId: claim.userId,
+          eventType: "expired_claim_use",
+          severity: "medium",
+          description: `Attempted to use expired claim ${claim.claimCode}`,
+          metadata: JSON.stringify({ merchantId: merchant.id }),
+        });
+        return res.status(400).json({ error: "Claim has expired", valid: false });
+      }
+      
+      if (claim.state === 'redeemed') {
+        await storage.createFraudEvent({
+          claimId: claim.id,
+          userId: claim.userId,
+          eventType: "duplicate_claim_attempt",
+          severity: "high",
+          description: `Attempted to reuse already redeemed claim ${claim.claimCode}`,
+          metadata: JSON.stringify({ 
+            merchantId: merchant.id,
+            originalMerchantId: claim.redeemedByMerchantId 
+          }),
+        });
+        return res.status(400).json({ 
+          error: "Claim has already been redeemed",
+          valid: false,
+          redeemedAt: claim.redeemedAt
+        });
+      }
+      
+      if (claim.state === 'refused') {
+        return res.status(400).json({ error: "Claim was refused", valid: false });
+      }
+      
+      // Update claim state to pending
+      await storage.updateClaimState(claim.id, 'pending');
+      
+      await logUserActivity(claim.userId, "claim_verify", {
+        claimId: claim.id,
+        claimCode: claim.claimCode,
+        merchantId: merchant.id,
+        merchantName: merchant.businessName,
+      });
+      
+      res.json({
+        valid: true,
+        claim: {
+          claimCode: claim.claimCode,
+          claimType: claim.claimType,
+          merchantName: claim.merchantName,
+          originalAmount: claim.originalAmount,
+          purchaseDate: claim.purchaseDate,
+          state: 'pending',
+        },
+        message: "PIN verified. You may now process the refund/exchange."
+      });
+    } catch (error: any) {
+      console.error("Claim verification error:", error);
+      res.status(400).json({ error: error.message || "Verification failed" });
+    }
+  });
+
+  // Redeem claim (complete the return/warranty process)
+  app.post("/api/merchant/redeem", merchantSessionAuth, async (req, res) => {
+    try {
+      const validatedData = redeemClaimSchema.parse(req.body);
+      const merchant = (req as any).merchant;
+      const merchantUser = (req as any).merchantUser;
+      
+      const claim = await storage.getClaimByCode(validatedData.claimCode);
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      
+      // Verify PIN again for security
+      if (claim.pin !== validatedData.pin) {
+        return res.status(401).json({ error: "Invalid PIN" });
+      }
+      
+      if (claim.state === 'redeemed') {
+        return res.status(400).json({ error: "Claim has already been fully redeemed" });
+      }
+      
+      if (claim.state === 'refused') {
+        return res.status(400).json({ error: "Claim was refused" });
+      }
+      
+      const isExpired = new Date(claim.expiresAt) < new Date();
+      if (isExpired) {
+        return res.status(400).json({ error: "Claim has expired" });
+      }
+      
+      const newState = validatedData.isPartial ? 'partial' : 'redeemed';
+      const refundAmount = validatedData.refundAmount 
+        ? String(validatedData.refundAmount)
+        : claim.originalAmount;
+      
+      await storage.updateClaimState(
+        claim.id, 
+        newState,
+        { merchantId: merchant.id, userId: merchantUser.id },
+        refundAmount
+      );
+      
+      // Log the redemption
+      await storage.createClaimVerification({
+        claimId: claim.id,
+        merchantId: merchant.id,
+        merchantUserId: merchantUser.id,
+        result: validatedData.isPartial ? "partial_approved" : "approved",
+        attemptedPin: validatedData.pin,
+        pinCorrect: true,
+        refundAmount,
+        notes: validatedData.notes,
+        ipAddress: req.ip || req.socket?.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+      
+      res.json({
+        success: true,
+        message: validatedData.isPartial 
+          ? "Partial refund processed successfully"
+          : "Claim redeemed successfully",
+        claim: {
+          claimCode: claim.claimCode,
+          state: newState,
+          refundAmount,
+        }
+      });
+    } catch (error: any) {
+      console.error("Claim redemption error:", error);
+      res.status(400).json({ error: error.message || "Redemption failed" });
+    }
+  });
+
+  // Refuse a claim
+  app.post("/api/merchant/refuse", merchantSessionAuth, async (req, res) => {
+    try {
+      const { claimCode, pin, reason } = req.body;
+      const merchant = (req as any).merchant;
+      const merchantUser = (req as any).merchantUser;
+      
+      if (!claimCode || !pin) {
+        return res.status(400).json({ error: "Claim code and PIN are required" });
+      }
+      
+      const claim = await storage.getClaimByCode(claimCode);
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found" });
+      }
+      
+      if (claim.pin !== pin) {
+        return res.status(401).json({ error: "Invalid PIN" });
+      }
+      
+      if (claim.state === 'redeemed' || claim.state === 'refused') {
+        return res.status(400).json({ error: "Claim has already been processed" });
+      }
+      
+      await storage.updateClaimState(claim.id, 'refused');
+      
+      await storage.createClaimVerification({
+        claimId: claim.id,
+        merchantId: merchant.id,
+        merchantUserId: merchantUser.id,
+        result: "rejected",
+        attemptedPin: pin,
+        pinCorrect: true,
+        notes: reason || "Claim refused by merchant",
+        ipAddress: req.ip || req.socket?.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+      
+      res.json({
+        success: true,
+        message: "Claim has been refused",
+        claim: {
+          claimCode: claim.claimCode,
+          state: 'refused',
+        }
+      });
+    } catch (error: any) {
+      res.status(400).json({ error: error.message || "Failed to refuse claim" });
+    }
+  });
+
+  // API-based verification (for POS integration)
+  app.post("/api/v1/verify", merchantApiAuth, async (req, res) => {
+    try {
+      const validatedData = verifyClaimSchema.parse(req.body);
+      const merchant = (req as any).merchant;
+      
+      const claim = await storage.getClaimByCode(validatedData.claimCode);
+      if (!claim) {
+        return res.status(404).json({ success: false, error: "Claim not found" });
+      }
+      
+      const failedAttempts = await storage.getFailedPinAttempts(claim.id, 15);
+      if (failedAttempts >= 5) {
+        return res.status(429).json({ 
+          success: false,
+          error: "Claim locked due to too many failed attempts"
+        });
+      }
+      
+      const pinCorrect = claim.pin === validatedData.pin;
+      
+      await storage.createClaimVerification({
+        claimId: claim.id,
+        merchantId: merchant.id,
+        result: pinCorrect ? "approved" : "rejected",
+        attemptedPin: validatedData.pin,
+        pinCorrect,
+        ipAddress: req.ip || req.socket?.remoteAddress || null,
+        userAgent: req.headers['user-agent'] || null,
+      });
+      
+      if (!pinCorrect) {
+        return res.status(401).json({ success: false, error: "Invalid PIN" });
+      }
+      
+      const isExpired = new Date(claim.expiresAt) < new Date();
+      const isUsed = claim.state === 'redeemed' || claim.state === 'refused';
+      
+      res.json({
+        success: true,
+        valid: !isExpired && !isUsed,
+        claim: {
+          claimCode: claim.claimCode,
+          claimType: claim.claimType,
+          state: claim.state,
+          merchantName: claim.merchantName,
+          originalAmount: claim.originalAmount,
+          purchaseDate: claim.purchaseDate,
+          expiresAt: claim.expiresAt,
+          isExpired,
+          isUsed,
+        }
+      });
+    } catch (error: any) {
+      res.status(400).json({ success: false, error: error.message });
+    }
+  });
+
+  // Get merchant verification history
+  app.get("/api/merchant/verifications", merchantSessionAuth, async (req, res) => {
+    try {
+      const merchant = (req as any).merchant;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      
+      const verifications = await storage.getVerificationsByMerchant(merchant.id, limit);
+      res.json({ verifications });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch verifications" });
     }
   });
 

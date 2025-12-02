@@ -7,12 +7,14 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { Textarea } from "@/components/ui/textarea";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { useImageQuality, type ImageQualityResult } from "@/hooks/use-image-quality";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
-import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw } from "lucide-react";
-import { CATEGORIES, type Purchase, type ConfidenceLevel } from "@shared/schema";
+import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw, Mail } from "lucide-react";
+import { CATEGORIES, type Purchase, type ConfidenceLevel, REFUND_TYPES } from "@shared/schema";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -22,11 +24,36 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+// Policy data interface
+interface PolicyData {
+  returnPolicyDays: number | null;
+  returnPolicyTerms: string | null;
+  refundType: 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
+  exchangePolicyDays: number | null;
+  exchangePolicyTerms: string | null;
+  warrantyMonths: number | null;
+  warrantyTerms: string | null;
+  policySource: 'extracted' | 'user_entered' | 'merchant_default';
+}
+
+const defaultPolicies: PolicyData = {
+  returnPolicyDays: null,
+  returnPolicyTerms: null,
+  refundType: null,
+  exchangePolicyDays: null,
+  exchangePolicyTerms: null,
+  warrantyMonths: null,
+  warrantyTerms: null,
+  policySource: 'merchant_default',
+};
+
 export default function Home() {
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
   const [selectedCategory, setSelectedCategory] = useState<string>("Other");
   const [isDragging, setIsDragging] = useState(false);
+  const [inputMode, setInputMode] = useState<"scan" | "email">("scan");
+  const [emailText, setEmailText] = useState("");
   const [ocrResult, setOcrResult] = useState<{
     merchant: string;
     date: string;
@@ -35,21 +62,31 @@ export default function Home() {
     warrantyEnds: string;
     confidence: ConfidenceLevel;
     rawText: string;
+    sourceType?: string;
+    policies?: PolicyData;
+    vatAmount?: number | null;
+    vatSource?: 'extracted' | 'calculated' | 'none';
+    invoiceNumber?: string | null;
   } | null>(null);
   const [editedData, setEditedData] = useState<{
     merchant: string;
     date: string;
     total: string;
   } | null>(null);
+  const [editedPolicies, setEditedPolicies] = useState<PolicyData>(defaultPolicies);
+  const [showPolicyEditor, setShowPolicyEditor] = useState(false);
   const [savedPurchase, setSavedPurchase] = useState<Purchase | null>(null);
 
-  // Compute deadlines based on edited date
+  // Compute deadlines based on edited date and policy values
   const computedDeadlines = editedData?.date ? (() => {
     const purchaseDate = new Date(editedData.date);
+    const returnDays = editedPolicies.returnPolicyDays || 30;
+    const warrantyMonthsValue = editedPolicies.warrantyMonths || 12;
+    
     const returnBy = new Date(purchaseDate);
-    returnBy.setDate(returnBy.getDate() + 30);
+    returnBy.setDate(returnBy.getDate() + returnDays);
     const warrantyEnds = new Date(purchaseDate);
-    warrantyEnds.setMonth(warrantyEnds.getMonth() + 12);
+    warrantyEnds.setMonth(warrantyEnds.getMonth() + warrantyMonthsValue);
     return {
       returnBy: returnBy.toISOString().split('T')[0],
       warrantyEnds: warrantyEnds.toISOString().split('T')[0]
@@ -115,6 +152,13 @@ export default function Home() {
         total: data.ocrData.total || "",
       });
       
+      // Set policies from OCR if extracted
+      if (data.ocrData.policies) {
+        setEditedPolicies(data.ocrData.policies);
+      } else {
+        setEditedPolicies(defaultPolicies);
+      }
+      
       if (data.ocrData.hasPartialData) {
         toast({
           title: "Partial scan complete",
@@ -150,11 +194,88 @@ export default function Home() {
     },
   });
 
+  const emailParseMutation = useMutation({
+    mutationFn: async (text: string) => {
+      const response = await fetch("/api/receipts/text", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ text, source: "email_paste" }),
+      });
+      
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
+        throw {
+          message: data.error || "Failed to parse email",
+          suggestion: data.suggestion || "Please check the email content",
+          canRetry: data.canRetry !== false,
+          isOcrError: true
+        };
+      }
+      
+      return data;
+    },
+    onSuccess: (data) => {
+      setOcrError(null);
+      setOcrResult({
+        ...data.ocrData,
+        sourceType: 'email_paste'
+      });
+      setEditedData({
+        merchant: data.ocrData.merchant || "",
+        date: data.ocrData.date || "",
+        total: data.ocrData.total?.toString() || "",
+      });
+      
+      // Set policies from email parsing if extracted
+      if (data.ocrData.policies) {
+        setEditedPolicies(data.ocrData.policies);
+      } else {
+        setEditedPolicies(defaultPolicies);
+      }
+      
+      if (data.ocrData.hasPartialData) {
+        toast({
+          title: "Partial extraction",
+          description: data.ocrData.partialDataMessage || "Some fields need manual entry",
+        });
+      } else {
+        toast({
+          title: "Email parsed",
+          description: "Review and edit the extracted data below",
+        });
+      }
+    },
+    onError: (error: any) => {
+      if (error.isOcrError) {
+        setOcrError({
+          message: error.message,
+          suggestion: error.suggestion,
+          canRetry: error.canRetry,
+        });
+      } else {
+        setOcrError({
+          message: "Something went wrong",
+          suggestion: "Please check your email content and try again",
+          canRetry: true
+        });
+      }
+      toast({
+        title: "Parsing failed",
+        description: error.message || "Could not parse email content",
+        variant: "destructive",
+      });
+    },
+  });
+
   const confirmMutation = useMutation({
     mutationFn: async () => {
-      if (!ocrResult || !editedData || !selectedFile) {
+      if (!ocrResult || !editedData) {
         throw new Error("No data to save");
       }
+      
+      const isEmailReceipt = ocrResult.sourceType === 'email_paste' || !selectedFile;
       
       // Validate edited data
       if (!editedData.merchant.trim()) {
@@ -185,16 +306,18 @@ export default function Home() {
           synced: false,
         });
         
-        await savePendingUpload({
-          merchant: editedData.merchant.trim(),
-          date: editedData.date,
-          total: editedData.total,
-          category: selectedCategory,
-          receiptId: tempId,
-          fileBlob: selectedFile,
-          fileName: selectedFile.name,
-          createdAt: new Date().toISOString(),
-        });
+        if (selectedFile) {
+          await savePendingUpload({
+            merchant: editedData.merchant.trim(),
+            date: editedData.date,
+            total: editedData.total,
+            category: selectedCategory,
+            receiptId: tempId,
+            fileBlob: selectedFile,
+            fileName: selectedFile.name,
+            createdAt: new Date().toISOString(),
+          });
+        }
         
         if ('serviceWorker' in navigator) {
           navigator.serviceWorker.ready.then((registration) => {
@@ -216,6 +339,7 @@ export default function Home() {
           date: editedData.date,
           total: editedData.total,
           category: selectedCategory,
+          policies: editedPolicies,
         });
       } catch (error: any) {
         // If network error, queue for later
@@ -235,16 +359,18 @@ export default function Home() {
             synced: false,
           });
           
-          await savePendingUpload({
-            merchant: editedData.merchant.trim(),
-            date: editedData.date,
-            total: editedData.total,
-            category: selectedCategory,
-            receiptId: tempId,
-            fileBlob: selectedFile,
-            fileName: selectedFile.name,
-            createdAt: new Date().toISOString(),
-          });
+          if (selectedFile) {
+            await savePendingUpload({
+              merchant: editedData.merchant.trim(),
+              date: editedData.date,
+              total: editedData.total,
+              category: selectedCategory,
+              receiptId: tempId,
+              fileBlob: selectedFile,
+              fileName: selectedFile.name,
+              createdAt: new Date().toISOString(),
+            });
+          }
           
           if ('serviceWorker' in navigator) {
             navigator.serviceWorker.ready.then((registration) => {
@@ -300,6 +426,8 @@ export default function Home() {
     setEditedData(null);
     setSavedPurchase(null);
     setOcrError(null);
+    setEditedPolicies(defaultPolicies);
+    setShowPolicyEditor(false);
     
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -347,6 +475,8 @@ export default function Home() {
     setOcrError(null);
     setOcrResult(null);
     setEditedData(null);
+    setEditedPolicies(defaultPolicies);
+    setShowPolicyEditor(false);
   };
 
   const handlePreview = () => {
@@ -595,113 +725,184 @@ export default function Home() {
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Upload className="h-5 w-5" />
-              Upload Receipt
+              Add Receipt
             </CardTitle>
             <CardDescription>
-              Take a photo, drag and drop, or browse files
+              Scan a physical receipt or paste from an email
             </CardDescription>
           </CardHeader>
           <CardContent className="space-y-4">
-            {!selectedFile && (
-              <Button
-                onClick={openCamera}
-                variant="outline"
-                className="w-full"
-                data-testid="button-camera"
-              >
-                <Camera className="h-4 w-4 mr-2" />
-                Take Photo
-              </Button>
-            )}
-            
-            <div
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-              className={`border-2 border-dashed rounded-lg p-8 text-center transition-all ${
-                isDragging
-                  ? "border-primary bg-primary/5"
-                  : "border-border hover:border-primary/50 hover:bg-accent/5"
-              }`}
-              data-testid="dropzone-receipt"
-            >
-              <input
-                type="file"
-                onChange={handleFileChange}
-                accept="image/jpeg,image/png,image/jpg,application/pdf"
-                className="hidden"
-                id="receipt-upload"
-                data-testid="input-receipt"
-              />
-              
-              {previewUrl ? (
-                <div className="space-y-4">
-                  <div className="relative inline-block">
-                    <img
-                      src={previewUrl}
-                      alt="Receipt preview"
-                      className="max-h-48 rounded-lg border"
-                      data-testid="img-preview"
-                    />
-                    <Button
-                      variant="destructive"
-                      size="icon"
-                      className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
-                      onClick={handleClearFile}
-                      data-testid="button-clear-file"
-                    >
-                      <X className="h-3 w-3" />
-                    </Button>
+            <Tabs value={inputMode} onValueChange={(v) => {
+              setInputMode(v as "scan" | "email");
+              setOcrError(null);
+              setOcrResult(null);
+              setEditedData(null);
+              setEditedPolicies(defaultPolicies);
+              setShowPolicyEditor(false);
+            }}>
+              <TabsList className="grid w-full grid-cols-2">
+                <TabsTrigger value="scan" data-testid="tab-scan" className="flex items-center gap-2">
+                  <Camera className="h-4 w-4" />
+                  Scan Receipt
+                </TabsTrigger>
+                <TabsTrigger value="email" data-testid="tab-email" className="flex items-center gap-2">
+                  <Mail className="h-4 w-4" />
+                  Email Receipt
+                </TabsTrigger>
+              </TabsList>
+
+              <TabsContent value="scan" className="space-y-4 mt-4">
+                <div
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  onDrop={handleDrop}
+                  className={`border-2 border-dashed rounded-lg p-8 text-center transition-all ${
+                    isDragging
+                      ? "border-primary bg-primary/5"
+                      : "border-border hover:border-primary/50 hover:bg-accent/5"
+                  }`}
+                  data-testid="dropzone-receipt"
+                >
+                  <input
+                    type="file"
+                    onChange={handleFileChange}
+                    accept="image/jpeg,image/png,image/jpg,application/pdf"
+                    className="hidden"
+                    id="receipt-upload"
+                    data-testid="input-receipt"
+                  />
+                  
+                  {previewUrl ? (
+                    <div className="space-y-4">
+                      <div className="relative inline-block">
+                        <img
+                          src={previewUrl}
+                          alt="Receipt preview"
+                          className="max-h-48 rounded-lg border"
+                          data-testid="img-preview"
+                        />
+                        <Button
+                          variant="destructive"
+                          size="icon"
+                          className="absolute -top-2 -right-2 h-6 w-6 rounded-full"
+                          onClick={handleClearFile}
+                          data-testid="button-clear-file"
+                        >
+                          <X className="h-3 w-3" />
+                        </Button>
+                      </div>
+                      <p className="text-sm font-medium" data-testid="text-file-name">
+                        {selectedFile?.name}
+                      </p>
+                      <p className="text-xs text-muted-foreground" data-testid="text-file-size">
+                        {selectedFile && (selectedFile.size / 1024).toFixed(1)} KB
+                      </p>
+                    </div>
+                  ) : (
+                    <label htmlFor="receipt-upload" className="cursor-pointer">
+                      <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
+                      <p className="text-sm font-medium mb-1">
+                        Drop your receipt here or click to browse
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        Supports JPEG, PNG, and PDF files (max 10MB)
+                      </p>
+                    </label>
+                  )}
+                </div>
+
+                {selectedFile && (
+                  <div className="space-y-2">
+                    <Label htmlFor="category" className="text-sm font-medium">
+                      Category
+                    </Label>
+                    <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                      <SelectTrigger id="category" data-testid="select-category">
+                        <Tag className="h-4 w-4 mr-2" />
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {CATEGORIES.map((cat) => (
+                          <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}`}>
+                            {cat}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
-                  <p className="text-sm font-medium" data-testid="text-file-name">
-                    {selectedFile?.name}
-                  </p>
-                  <p className="text-xs text-muted-foreground" data-testid="text-file-size">
-                    {selectedFile && (selectedFile.size / 1024).toFixed(1)} KB
+                )}
+
+                <Button
+                  onClick={handlePreview}
+                  disabled={!selectedFile || previewMutation.isPending || !!ocrResult}
+                  className="w-full"
+                  data-testid="button-preview"
+                >
+                  {previewMutation.isPending ? "Processing..." : "Scan Receipt"}
+                </Button>
+              </TabsContent>
+
+              <TabsContent value="email" className="space-y-4 mt-4">
+                <div className="space-y-2">
+                  <Label htmlFor="email-text" className="text-sm font-medium">
+                    Paste your email receipt
+                  </Label>
+                  <Textarea
+                    id="email-text"
+                    placeholder="Copy and paste the entire email content here. This works with order confirmations, digital receipts, and purchase emails..."
+                    className="min-h-[200px] resize-y"
+                    value={emailText}
+                    onChange={(e) => setEmailText(e.target.value)}
+                    data-testid="textarea-email"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Tip: Select all (Ctrl+A) and copy (Ctrl+C) from your email, then paste here
                   </p>
                 </div>
-              ) : (
-                <label htmlFor="receipt-upload" className="cursor-pointer">
-                  <Upload className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
-                  <p className="text-sm font-medium mb-1">
-                    Drop your receipt here or click to browse
-                  </p>
-                  <p className="text-xs text-muted-foreground">
-                    Supports JPEG, PNG, and PDF files (max 10MB)
-                  </p>
-                </label>
-              )}
-            </div>
 
-            {selectedFile && (
-              <div className="space-y-2">
-                <Label htmlFor="category" className="text-sm font-medium">
-                  Category
-                </Label>
-                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
-                  <SelectTrigger id="category" data-testid="select-category">
-                    <Tag className="h-4 w-4 mr-2" />
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CATEGORIES.map((cat) => (
-                      <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}`}>
-                        {cat}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            )}
+                <div className="space-y-2">
+                  <Label htmlFor="email-category" className="text-sm font-medium">
+                    Category
+                  </Label>
+                  <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                    <SelectTrigger id="email-category" data-testid="select-email-category">
+                      <Tag className="h-4 w-4 mr-2" />
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CATEGORIES.map((cat) => (
+                        <SelectItem key={cat} value={cat} data-testid={`option-email-${cat.toLowerCase()}`}>
+                          {cat}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
 
-            <Button
-              onClick={handlePreview}
-              disabled={!selectedFile || previewMutation.isPending || !!ocrResult}
-              className="w-full"
-              data-testid="button-preview"
-            >
-              {previewMutation.isPending ? "Processing..." : "Scan Receipt"}
-            </Button>
+                <div className="flex gap-2">
+                  <Button
+                    onClick={() => emailParseMutation.mutate(emailText)}
+                    disabled={emailText.trim().length < 20 || emailParseMutation.isPending || !!ocrResult}
+                    className="flex-1"
+                    data-testid="button-parse-email"
+                  >
+                    {emailParseMutation.isPending ? "Processing..." : "Parse Email"}
+                  </Button>
+                  {emailText && (
+                    <Button
+                      variant="outline"
+                      onClick={() => {
+                        setEmailText("");
+                        setOcrError(null);
+                      }}
+                      data-testid="button-clear-email"
+                    >
+                      <X className="h-4 w-4" />
+                    </Button>
+                  )}
+                </div>
+              </TabsContent>
+            </Tabs>
 
             {ocrError && (
               <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg space-y-3" data-testid="container-ocr-error">
@@ -838,18 +1039,166 @@ export default function Home() {
                   </p>
                   <div className="grid grid-cols-2 gap-3 text-sm">
                     <div>
-                      <p className="text-xs text-muted-foreground">Return By (30 days)</p>
+                      <p className="text-xs text-muted-foreground">Return By ({editedPolicies.returnPolicyDays || 30} days)</p>
                       <p className="font-medium" data-testid="text-computed-return">
                         {computedDeadlines ? new Date(computedDeadlines.returnBy).toLocaleDateString() : 'N/A'}
                       </p>
                     </div>
                     <div>
-                      <p className="text-xs text-muted-foreground">Warranty Ends (12 months)</p>
+                      <p className="text-xs text-muted-foreground">Warranty Ends ({editedPolicies.warrantyMonths || 12} months)</p>
                       <p className="font-medium" data-testid="text-computed-warranty">
                         {computedDeadlines ? new Date(computedDeadlines.warrantyEnds).toLocaleDateString() : 'N/A'}
                       </p>
                     </div>
                   </div>
+                </div>
+
+                {/* Policy Section */}
+                <div className="p-3 border rounded-md space-y-3" data-testid="section-policies">
+                  <div className="flex items-center justify-between">
+                    <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide flex items-center gap-2">
+                      <FileText className="h-3.5 w-3.5" />
+                      Store Policies
+                      {editedPolicies.policySource === 'extracted' && (
+                        <Badge variant="secondary" className="text-[10px]" data-testid="badge-policy-extracted">Auto-detected</Badge>
+                      )}
+                      {editedPolicies.policySource === 'user_entered' && (
+                        <Badge variant="outline" className="text-[10px]" data-testid="badge-policy-user-entered">Edited</Badge>
+                      )}
+                    </p>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setShowPolicyEditor(!showPolicyEditor)}
+                      data-testid="button-toggle-policies"
+                    >
+                      <Edit className="h-3.5 w-3.5 mr-1" />
+                      {showPolicyEditor ? 'Hide' : 'Edit'}
+                    </Button>
+                  </div>
+                  
+                  {/* No Policies Detected Message */}
+                  {!editedPolicies.returnPolicyDays && !editedPolicies.warrantyMonths && editedPolicies.policySource !== 'user_entered' && (
+                    <div className="p-2 bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-800 rounded text-xs text-amber-700 dark:text-amber-300 flex items-center gap-2" data-testid="alert-no-policies">
+                      <AlertTriangle className="h-3.5 w-3.5 flex-shrink-0" />
+                      <span>No policies detected. Click Edit to add return/warranty information.</span>
+                    </div>
+                  )}
+                  
+                  {/* Policy Summary */}
+                  <div className="grid grid-cols-2 gap-2 text-sm">
+                    <div>
+                      <p className="text-xs text-muted-foreground">Return Policy</p>
+                      <p className="font-medium" data-testid="text-return-policy">
+                        {editedPolicies.returnPolicyDays ? `${editedPolicies.returnPolicyDays} days` : 'Not specified'}
+                        {editedPolicies.refundType && ` (${editedPolicies.refundType.replace('_', ' ')})`}
+                      </p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-muted-foreground">Warranty</p>
+                      <p className="font-medium" data-testid="text-warranty-policy">
+                        {editedPolicies.warrantyMonths ? `${editedPolicies.warrantyMonths} months` : 'Not specified'}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Policy Editor (collapsible) */}
+                  {showPolicyEditor && (
+                    <div className="space-y-3 pt-2 border-t" data-testid="section-policy-editor">
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label htmlFor="return-days" className="text-xs">Return Period (days)</Label>
+                          <Input
+                            id="return-days"
+                            type="number"
+                            min="0"
+                            max="365"
+                            value={editedPolicies.returnPolicyDays ?? ''}
+                            onChange={(e) => setEditedPolicies({
+                              ...editedPolicies,
+                              returnPolicyDays: e.target.value ? parseInt(e.target.value) : null,
+                              policySource: 'user_entered'
+                            })}
+                            placeholder="30"
+                            data-testid="input-return-days"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="refund-type" className="text-xs">Refund Type</Label>
+                          <Select
+                            value={editedPolicies.refundType || ''}
+                            onValueChange={(value) => setEditedPolicies({
+                              ...editedPolicies,
+                              refundType: value as PolicyData['refundType'],
+                              policySource: 'user_entered'
+                            })}
+                          >
+                            <SelectTrigger id="refund-type" data-testid="select-refund-type">
+                              <SelectValue placeholder="Select type" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              <SelectItem value="full">Full Refund</SelectItem>
+                              <SelectItem value="store_credit">Store Credit</SelectItem>
+                              <SelectItem value="exchange_only">Exchange Only</SelectItem>
+                              <SelectItem value="partial">Partial Refund</SelectItem>
+                              <SelectItem value="none">No Refund</SelectItem>
+                            </SelectContent>
+                          </Select>
+                        </div>
+                      </div>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div className="space-y-1">
+                          <Label htmlFor="exchange-days" className="text-xs">Exchange Period (days)</Label>
+                          <Input
+                            id="exchange-days"
+                            type="number"
+                            min="0"
+                            max="365"
+                            value={editedPolicies.exchangePolicyDays ?? ''}
+                            onChange={(e) => setEditedPolicies({
+                              ...editedPolicies,
+                              exchangePolicyDays: e.target.value ? parseInt(e.target.value) : null,
+                              policySource: 'user_entered'
+                            })}
+                            placeholder="30"
+                            data-testid="input-exchange-days"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <Label htmlFor="warranty-months" className="text-xs">Warranty (months)</Label>
+                          <Input
+                            id="warranty-months"
+                            type="number"
+                            min="0"
+                            max="120"
+                            value={editedPolicies.warrantyMonths ?? ''}
+                            onChange={(e) => setEditedPolicies({
+                              ...editedPolicies,
+                              warrantyMonths: e.target.value ? parseInt(e.target.value) : null,
+                              policySource: 'user_entered'
+                            })}
+                            placeholder="12"
+                            data-testid="input-warranty-months"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="policy-notes" className="text-xs">Policy Notes (optional)</Label>
+                        <Input
+                          id="policy-notes"
+                          value={editedPolicies.returnPolicyTerms ?? ''}
+                          onChange={(e) => setEditedPolicies({
+                            ...editedPolicies,
+                            returnPolicyTerms: e.target.value || null,
+                            policySource: 'user_entered'
+                          })}
+                          placeholder="e.g., Original packaging required"
+                          data-testid="input-policy-notes"
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
 

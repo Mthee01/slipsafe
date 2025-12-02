@@ -5,9 +5,11 @@ let connectionSettings: any;
 async function getCredentials() {
   // First, try to use direct API key from environment variable
   if (process.env.RESEND_API_KEY) {
+    const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
+    console.log(`[Email] Using API key from environment, from email: ${fromEmail}`);
     return {
       apiKey: process.env.RESEND_API_KEY,
-      fromEmail: process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev'
+      fromEmail
     };
   }
 
@@ -54,6 +56,9 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
   try {
     const { client, fromEmail } = await getResendClient();
     
+    console.log(`[Email] Attempting to send email to ${to} from ${fromEmail}`);
+    console.log(`[Email] Subject: ${subject}`);
+    
     const result = await client.emails.send({
       from: `SlipSafe <${fromEmail}>`,
       to: [to],
@@ -62,14 +67,18 @@ export async function sendEmail(to: string, subject: string, html: string): Prom
     });
 
     if (result.error) {
-      console.error('[Email] Failed to send:', result.error);
+      console.error('[Email] Failed to send:', JSON.stringify(result.error, null, 2));
+      console.error('[Email] Error details - statusCode:', (result.error as any).statusCode);
+      console.error('[Email] Error details - message:', result.error.message);
+      console.error('[Email] Error details - name:', result.error.name);
       return false;
     }
 
     console.log(`[Email] Sent successfully to ${to}, id: ${result.data?.id}`);
     return true;
-  } catch (error) {
-    console.error('[Email] Error sending email:', error);
+  } catch (error: any) {
+    console.error('[Email] Error sending email:', error.message || error);
+    console.error('[Email] Full error:', JSON.stringify(error, null, 2));
     return false;
   }
 }
@@ -257,6 +266,103 @@ export function generateEmailVerificationEmail(verifyLink: string, fullName: str
                 <p style="color: #71717a; margin: 0 0 8px 0; font-size: 12px;">If the button doesn't work, copy and paste this link:</p>
                 <p style="color: #4f46e5; margin: 0; font-size: 12px; word-break: break-all;">${verifyLink}</p>
               </div>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 32px; border-top: 1px solid #e4e4e7; text-align: center;">
+              <p style="color: #a1a1aa; margin: 0; font-size: 12px;">
+                This is an automated message from SlipSafe. Please do not reply to this email.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}
+
+interface WarrantyItem {
+  merchant: string;
+  date: string;
+  warrantyEnds: string;
+  total: string;
+  daysLeft: number;
+}
+
+export function generateWarrantyAlertEmail(fullName: string, items: WarrantyItem[]): string {
+  const itemsHtml = items.map(item => `
+    <tr>
+      <td style="padding: 12px; border-bottom: 1px solid #e4e4e7;">
+        <strong style="color: #18181b;">${item.merchant}</strong>
+        <br><span style="color: #71717a; font-size: 13px;">Purchased: ${new Date(item.date).toLocaleDateString()}</span>
+      </td>
+      <td style="padding: 12px; border-bottom: 1px solid #e4e4e7; text-align: right;">
+        <span style="color: #18181b; font-weight: 600;">$${item.total}</span>
+      </td>
+      <td style="padding: 12px; border-bottom: 1px solid #e4e4e7; text-align: right;">
+        <span style="color: ${item.daysLeft <= 7 ? '#ef4444' : '#f59e0b'}; font-weight: 600;">
+          ${item.daysLeft} day${item.daysLeft !== 1 ? 's' : ''} left
+        </span>
+        <br><span style="color: #71717a; font-size: 13px;">Expires: ${new Date(item.warrantyEnds).toLocaleDateString()}</span>
+      </td>
+    </tr>
+  `).join('');
+
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Warranty Expiry Alert - SlipSafe</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" max-width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #f59e0b 0%, #ef4444 100%); padding: 32px; border-radius: 8px 8px 0 0; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SlipSafe</h1>
+              <p style="color: rgba(255,255,255,0.9); margin: 8px 0 0 0; font-size: 14px;">Warranty Expiry Alert</p>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 32px;">
+              <h2 style="color: #18181b; margin: 0 0 16px 0; font-size: 20px; font-weight: 600;">Hi ${fullName},</h2>
+              <p style="color: #52525b; margin: 0 0 24px 0; font-size: 16px; line-height: 1.6;">
+                Some of your product warranties are expiring soon. Make sure to use them before they expire!
+              </p>
+              
+              <!-- Items Table -->
+              <table width="100%" cellpadding="0" cellspacing="0" style="border: 1px solid #e4e4e7; border-radius: 8px; margin: 24px 0;">
+                <thead>
+                  <tr style="background-color: #f4f4f5;">
+                    <th style="padding: 12px; text-align: left; color: #71717a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Item</th>
+                    <th style="padding: 12px; text-align: right; color: #71717a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Value</th>
+                    <th style="padding: 12px; text-align: right; color: #71717a; font-size: 12px; text-transform: uppercase; letter-spacing: 0.5px;">Warranty</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${itemsHtml}
+                </tbody>
+              </table>
+              
+              <p style="color: #52525b; margin: 24px 0; font-size: 15px; line-height: 1.6;">
+                <strong>Tip:</strong> If you need to make a warranty claim, log in to SlipSafe to generate a verifiable claim with QR code for easy verification.
+              </p>
+              
+              <p style="color: #71717a; margin: 24px 0 0 0; font-size: 14px; line-height: 1.6;">
+                You're receiving this because you have warranty notifications enabled. You can manage your notification preferences in Settings.
+              </p>
             </td>
           </tr>
           

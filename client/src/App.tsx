@@ -11,6 +11,7 @@ import { AlertsWidget } from "@/components/alerts-widget";
 import { OfflineIndicator } from "@/components/offline-indicator";
 import { InstallPrompt } from "@/components/install-prompt";
 import { useAuth } from "@/hooks/use-auth";
+import { useWarrantyNotifications } from "@/hooks/use-warranty-notifications";
 import { Button } from "@/components/ui/button";
 import { LogOut } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -29,6 +30,7 @@ import RegistrationSuccess from "@/pages/registration-success";
 import VerifyEmail from "@/pages/verify-email";
 import NotFound from "@/pages/not-found";
 import AdminDashboard from "@/pages/admin";
+import MerchantPortal from "@/pages/merchant-portal";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
 function AppHeader() {
@@ -89,6 +91,8 @@ function AppHeader() {
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
+  
+  useWarrantyNotifications();
 
   if (isLoading) {
     return (
@@ -108,6 +112,8 @@ function AppContent() {
         <Route path="/forgot-username" component={ForgotUsername} />
         <Route path="/forgot-password" component={ForgotPassword} />
         <Route path="/reset-password" component={ResetPassword} />
+        <Route path="/merchant" component={MerchantPortal} />
+        <Route path="/verify/:claimCode" component={MerchantPortal} />
         <Route>
           <Redirect to="/login" />
         </Route>
@@ -130,6 +136,8 @@ function AppContent() {
               <Route path="/settings" component={Settings} />
               <Route path="/profile" component={Profile} />
               <Route path="/admin" component={AdminDashboard} />
+              <Route path="/merchant" component={MerchantPortal} />
+              <Route path="/verify/:claimCode" component={MerchantPortal} />
               <Route path="/login">
                 <Redirect to="/" />
               </Route>

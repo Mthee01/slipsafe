@@ -1,6 +1,6 @@
-import { type User, type InsertUser, type UpdateUserProfile, type Purchase, type InsertPurchase, type Settings, type InsertSettings, type PasswordResetToken, type EmailVerificationToken, type BusinessProfile, type InsertBusinessProfile, type UpdateBusinessProfile, type Client, type InsertClient, type UpdateClient, type MerchantRule, type InsertMerchantRule, type UserActivity, type InsertUserActivity, users, purchases, settings, passwordResetTokens, emailVerificationTokens, businessProfiles, clients, merchantRules, userActivity, normalizePhone } from "@shared/schema";
+import { type User, type InsertUser, type UpdateUserProfile, type Purchase, type InsertPurchase, type Settings, type InsertSettings, type PasswordResetToken, type EmailVerificationToken, type BusinessProfile, type InsertBusinessProfile, type UpdateBusinessProfile, type Client, type InsertClient, type UpdateClient, type MerchantRule, type InsertMerchantRule, type UserActivity, type InsertUserActivity, type Merchant, type InsertMerchant, type MerchantUser, type InsertMerchantUser, type Claim, type InsertClaim, type ClaimVerification, type InsertClaimVerification, type FraudEvent, type InsertFraudEvent, users, purchases, settings, passwordResetTokens, emailVerificationTokens, businessProfiles, clients, merchantRules, userActivity, merchants, merchantUsers, claims, claimVerifications, fraudEvents, normalizePhone } from "@shared/schema";
 import { db } from "./db";
-import { eq, and, ilike, or, lt, desc, sql, count } from "drizzle-orm";
+import { eq, and, ilike, or, lt, desc, sql, count, gte } from "drizzle-orm";
 
 export const SYSTEM_USER_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -65,6 +65,40 @@ export interface IStorage {
   getUserActivity(userId: string, page: number, limit: number): Promise<{ activities: UserActivity[]; total: number; page: number; limit: number; totalPages: number }>;
   getAllUserActivity(page: number, limit: number, userId?: string, action?: string): Promise<{ activities: UserActivity[]; total: number; page: number; limit: number; totalPages: number }>;
   getAdminStats(): Promise<{ totalUsers: number; totalReceipts: number; totalClaims: number; recentLogins: number; activeUsersToday: number; newUsersThisWeek: number }>;
+  
+  // Merchant verification system
+  createMerchant(merchant: InsertMerchant, apiKey: string, apiKeyHash: string): Promise<Merchant>;
+  getMerchantById(id: string): Promise<Merchant | undefined>;
+  getMerchantByApiKey(apiKey: string): Promise<Merchant | undefined>;
+  getMerchantByEmail(email: string): Promise<Merchant | undefined>;
+  updateMerchant(id: string, updates: Partial<InsertMerchant>): Promise<Merchant | undefined>;
+  getAllMerchants(): Promise<Merchant[]>;
+  
+  createMerchantUser(user: InsertMerchantUser): Promise<MerchantUser>;
+  getMerchantUserById(id: string): Promise<MerchantUser | undefined>;
+  getMerchantUserByEmail(merchantId: string, email: string): Promise<MerchantUser | undefined>;
+  getMerchantUsers(merchantId: string): Promise<MerchantUser[]>;
+  updateMerchantUser(id: string, updates: Partial<InsertMerchantUser>): Promise<MerchantUser | undefined>;
+  updateMerchantUserLogin(id: string): Promise<MerchantUser | undefined>;
+  deleteMerchantUser(id: string): Promise<boolean>;
+  
+  createClaim(claim: InsertClaim, claimCode: string, pin: string, qrCodeData: string): Promise<Claim>;
+  getClaimById(id: string): Promise<Claim | undefined>;
+  getClaimByCode(claimCode: string): Promise<Claim | undefined>;
+  getClaimsByUser(userId: string): Promise<Claim[]>;
+  getClaimsByPurchase(purchaseId: string): Promise<Claim[]>;
+  updateClaimState(id: string, state: string, redeemedBy?: { merchantId?: string; userId?: string }, redeemedAmount?: string): Promise<Claim | undefined>;
+  getActiveClaims(userId: string): Promise<Claim[]>;
+  
+  createClaimVerification(verification: InsertClaimVerification): Promise<ClaimVerification>;
+  getClaimVerifications(claimId: string): Promise<ClaimVerification[]>;
+  getVerificationsByMerchant(merchantId: string, limit?: number): Promise<ClaimVerification[]>;
+  
+  createFraudEvent(event: InsertFraudEvent): Promise<FraudEvent>;
+  getFraudEvents(filters?: { userId?: string; claimId?: string; resolved?: boolean }): Promise<FraudEvent[]>;
+  resolveFraudEvent(id: string, resolvedBy: string): Promise<FraudEvent | undefined>;
+  
+  getFailedPinAttempts(claimId: string, minutes: number): Promise<number>;
 }
 
 export class DatabaseStorage implements IStorage {
@@ -588,6 +622,206 @@ export class DatabaseStorage implements IStorage {
       .where(sql`${users.id} IS NOT NULL`); // Placeholder - we don't have createdAt on users
     
     return { totalUsers, totalReceipts, totalClaims, recentLogins, activeUsersToday, newUsersThisWeek: 0 };
+  }
+
+  // ============================================
+  // MERCHANT VERIFICATION SYSTEM IMPLEMENTATIONS
+  // ============================================
+
+  async createMerchant(merchant: InsertMerchant, apiKey: string, apiKeyHash: string): Promise<Merchant> {
+    const [created] = await db.insert(merchants).values({
+      ...merchant,
+      apiKey,
+      apiKeyHash,
+      registrationNumber: merchant.registrationNumber || null,
+      taxId: merchant.taxId || null,
+      phone: merchant.phone || null,
+      address: merchant.address || null,
+    }).returning();
+    return created;
+  }
+
+  async getMerchantById(id: string): Promise<Merchant | undefined> {
+    const [merchant] = await db.select().from(merchants).where(eq(merchants.id, id));
+    return merchant;
+  }
+
+  async getMerchantByApiKey(apiKey: string): Promise<Merchant | undefined> {
+    const [merchant] = await db.select().from(merchants).where(eq(merchants.apiKey, apiKey));
+    return merchant;
+  }
+
+  async getMerchantByEmail(email: string): Promise<Merchant | undefined> {
+    const [merchant] = await db.select().from(merchants).where(ilike(merchants.email, email));
+    return merchant;
+  }
+
+  async updateMerchant(id: string, updates: Partial<InsertMerchant>): Promise<Merchant | undefined> {
+    const [merchant] = await db.update(merchants)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(merchants.id, id))
+      .returning();
+    return merchant;
+  }
+
+  async getAllMerchants(): Promise<Merchant[]> {
+    return db.select().from(merchants).orderBy(desc(merchants.createdAt));
+  }
+
+  async createMerchantUser(user: InsertMerchantUser): Promise<MerchantUser> {
+    const [created] = await db.insert(merchantUsers).values(user).returning();
+    return created;
+  }
+
+  async getMerchantUserById(id: string): Promise<MerchantUser | undefined> {
+    const [user] = await db.select().from(merchantUsers).where(eq(merchantUsers.id, id));
+    return user;
+  }
+
+  async getMerchantUserByEmail(merchantId: string, email: string): Promise<MerchantUser | undefined> {
+    const [user] = await db.select().from(merchantUsers)
+      .where(and(eq(merchantUsers.merchantId, merchantId), ilike(merchantUsers.email, email)));
+    return user;
+  }
+
+  async getMerchantUsers(merchantId: string): Promise<MerchantUser[]> {
+    return db.select().from(merchantUsers)
+      .where(eq(merchantUsers.merchantId, merchantId))
+      .orderBy(desc(merchantUsers.createdAt));
+  }
+
+  async updateMerchantUser(id: string, updates: Partial<InsertMerchantUser>): Promise<MerchantUser | undefined> {
+    const [user] = await db.update(merchantUsers)
+      .set(updates)
+      .where(eq(merchantUsers.id, id))
+      .returning();
+    return user;
+  }
+
+  async updateMerchantUserLogin(id: string): Promise<MerchantUser | undefined> {
+    const [user] = await db.update(merchantUsers)
+      .set({ lastLoginAt: new Date() })
+      .where(eq(merchantUsers.id, id))
+      .returning();
+    return user;
+  }
+
+  async deleteMerchantUser(id: string): Promise<boolean> {
+    const result = await db.delete(merchantUsers).where(eq(merchantUsers.id, id));
+    return (result.rowCount ?? 0) > 0;
+  }
+
+  async createClaim(claim: InsertClaim, claimCode: string, pin: string, qrCodeData: string): Promise<Claim> {
+    const [created] = await db.insert(claims).values({
+      ...claim,
+      claimCode,
+      pin,
+      qrCodeData,
+      state: "issued",
+    }).returning();
+    return created;
+  }
+
+  async getClaimById(id: string): Promise<Claim | undefined> {
+    const [claim] = await db.select().from(claims).where(eq(claims.id, id));
+    return claim;
+  }
+
+  async getClaimByCode(claimCode: string): Promise<Claim | undefined> {
+    const [claim] = await db.select().from(claims).where(eq(claims.claimCode, claimCode));
+    return claim;
+  }
+
+  async getClaimsByUser(userId: string): Promise<Claim[]> {
+    return db.select().from(claims)
+      .where(eq(claims.userId, userId))
+      .orderBy(desc(claims.createdAt));
+  }
+
+  async getClaimsByPurchase(purchaseId: string): Promise<Claim[]> {
+    return db.select().from(claims)
+      .where(eq(claims.purchaseId, purchaseId))
+      .orderBy(desc(claims.createdAt));
+  }
+
+  async updateClaimState(id: string, state: string, redeemedBy?: { merchantId?: string; userId?: string }, redeemedAmount?: string): Promise<Claim | undefined> {
+    const updates: any = { state };
+    if (state === "redeemed" || state === "partial") {
+      updates.redeemedAt = new Date();
+      if (redeemedBy?.merchantId) updates.redeemedByMerchantId = redeemedBy.merchantId;
+      if (redeemedBy?.userId) updates.redeemedByUserId = redeemedBy.userId;
+      if (redeemedAmount) updates.redeemedAmount = redeemedAmount;
+    }
+    const [claim] = await db.update(claims)
+      .set(updates)
+      .where(eq(claims.id, id))
+      .returning();
+    return claim;
+  }
+
+  async getActiveClaims(userId: string): Promise<Claim[]> {
+    return db.select().from(claims)
+      .where(and(
+        eq(claims.userId, userId),
+        or(eq(claims.state, "issued"), eq(claims.state, "partial")),
+        gte(claims.expiresAt, new Date())
+      ))
+      .orderBy(desc(claims.createdAt));
+  }
+
+  async createClaimVerification(verification: InsertClaimVerification): Promise<ClaimVerification> {
+    const [created] = await db.insert(claimVerifications).values(verification).returning();
+    return created;
+  }
+
+  async getClaimVerifications(claimId: string): Promise<ClaimVerification[]> {
+    return db.select().from(claimVerifications)
+      .where(eq(claimVerifications.claimId, claimId))
+      .orderBy(desc(claimVerifications.createdAt));
+  }
+
+  async getVerificationsByMerchant(merchantId: string, limit = 50): Promise<ClaimVerification[]> {
+    return db.select().from(claimVerifications)
+      .where(eq(claimVerifications.merchantId, merchantId))
+      .orderBy(desc(claimVerifications.createdAt))
+      .limit(limit);
+  }
+
+  async createFraudEvent(event: InsertFraudEvent): Promise<FraudEvent> {
+    const [created] = await db.insert(fraudEvents).values(event).returning();
+    return created;
+  }
+
+  async getFraudEvents(filters?: { userId?: string; claimId?: string; resolved?: boolean }): Promise<FraudEvent[]> {
+    let conditions: any[] = [];
+    if (filters?.userId) conditions.push(eq(fraudEvents.userId, filters.userId));
+    if (filters?.claimId) conditions.push(eq(fraudEvents.claimId, filters.claimId));
+    if (filters?.resolved !== undefined) conditions.push(eq(fraudEvents.resolved, filters.resolved));
+    
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    return db.select().from(fraudEvents)
+      .where(whereClause)
+      .orderBy(desc(fraudEvents.createdAt));
+  }
+
+  async resolveFraudEvent(id: string, resolvedBy: string): Promise<FraudEvent | undefined> {
+    const [event] = await db.update(fraudEvents)
+      .set({ resolved: true, resolvedAt: new Date(), resolvedBy })
+      .where(eq(fraudEvents.id, id))
+      .returning();
+    return event;
+  }
+
+  async getFailedPinAttempts(claimId: string, minutes: number): Promise<number> {
+    const since = new Date(Date.now() - minutes * 60 * 1000);
+    const [{ count: failedCount }] = await db.select({ count: count() })
+      .from(claimVerifications)
+      .where(and(
+        eq(claimVerifications.claimId, claimId),
+        eq(claimVerifications.pinCorrect, false),
+        gte(claimVerifications.createdAt, since)
+      ));
+    return failedCount;
   }
 }
 
