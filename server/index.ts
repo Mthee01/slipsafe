@@ -57,6 +57,12 @@ declare module 'http' {
   }
 }
 
+// Trust proxy for deployments behind reverse proxies (Azure, Heroku, etc.)
+// This is required for secure cookies to work correctly
+if (process.env.NODE_ENV === "production") {
+  app.set("trust proxy", 1);
+}
+
 app.use(session({
   secret: process.env.SESSION_SECRET || "slipsafe_dev_session_secret",
   resave: false,
@@ -64,7 +70,8 @@ app.use(session({
   cookie: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7
+    maxAge: 1000 * 60 * 60 * 24 * 7,
+    sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
   }
 }));
 
