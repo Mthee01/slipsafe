@@ -1025,6 +1025,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get policies from request body (user may have edited) or from preview data (extracted)
       const policies = req.body.policies || previewData.policies || {};
       
+      // Get invoiceNumber from request body (user may have edited) or from preview data (extracted)
+      const invoiceNumber = req.body.invoiceNumber || previewData.invoiceNumber || null;
+
       const purchaseData = {
         userId,
         hash,
@@ -1049,7 +1052,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         policySource: policies.policySource || 'merchant_default',
         // VAT fields
         vatAmount: previewData.vatAmount?.toString() ?? null,
-        invoiceNumber: previewData.invoiceNumber ?? null,
+        invoiceNumber: invoiceNumber,
       };
 
       const validatedData = insertPurchaseSchema.parse(purchaseData);

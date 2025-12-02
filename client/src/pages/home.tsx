@@ -13,7 +13,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { useImageQuality, type ImageQualityResult } from "@/hooks/use-image-quality";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
-import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw, Mail } from "lucide-react";
+import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw, Mail, AlertCircle } from "lucide-react";
 import { CATEGORIES, type Purchase, type ConfidenceLevel, REFUND_TYPES } from "@shared/schema";
 import { Progress } from "@/components/ui/progress";
 import {
@@ -944,12 +944,12 @@ export default function Home() {
                         confidence: "low",
                         rawText: "",
                         returnBy: "",
-                        warrantyEnds: ""
+                        warrantyEnds: "",
                       });
                       setEditedData({
                         merchant: "",
                         date: new Date().toISOString().split('T')[0],
-                        total: ""
+                        total: "",
                       });
                     }}
                     data-testid="button-manual-entry"
@@ -1032,6 +1032,48 @@ export default function Home() {
                     />
                   </div>
                 </div>
+
+                {ocrResult?.invoiceNumber ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="edit-invoice" className="flex items-center gap-2">
+                      <FileText className="h-4 w-4" />
+                      Invoice / Receipt Number
+                      <Badge variant="secondary" className="text-[10px]">Auto-detected</Badge>
+                    </Label>
+                    <Input
+                      id="edit-invoice"
+                      value={ocrResult.invoiceNumber}
+                      readOnly
+                      className="bg-muted cursor-not-allowed"
+                      data-testid="input-edit-invoice"
+                    />
+                  </div>
+                ) : (
+                  <div className="p-3 bg-destructive/10 border border-destructive/30 rounded-md space-y-2" data-testid="alert-no-invoice">
+                    <div className="flex items-center gap-2 text-destructive">
+                      <AlertCircle className="h-4 w-4" />
+                      <p className="text-sm font-medium">Invoice/Order Number Required</p>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      No invoice or order number was detected on this receipt. Please reload the receipt with better lighting or use a clearer image.
+                    </p>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setOcrResult(null);
+                        setEditedData(null);
+                        setSelectedFile(null);
+                        setPreviewUrl(null);
+                      }}
+                      className="mt-2"
+                      data-testid="button-reload-receipt"
+                    >
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Reload Receipt
+                    </Button>
+                  </div>
+                )}
 
                 <div className="p-3 bg-muted rounded-md space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -1202,15 +1244,33 @@ export default function Home() {
                 </div>
               </div>
 
-              <Button
-                onClick={handleConfirm}
-                disabled={confirmMutation.isPending || !editedData.merchant || !editedData.date || !editedData.total}
-                className="w-full"
-                data-testid="button-confirm"
-              >
-                <Check className="mr-2 h-4 w-4" />
-                {confirmMutation.isPending ? "Saving..." : "Save Receipt"}
-              </Button>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOcrResult(null);
+                    setEditedData(null);
+                    setEditedPolicies(defaultPolicies);
+                    setSelectedFile(null);
+                    setPreviewUrl(null);
+                    setOcrError(null);
+                  }}
+                  className="flex-1"
+                  data-testid="button-cancel"
+                >
+                  <X className="mr-2 h-4 w-4" />
+                  Cancel
+                </Button>
+                <Button
+                  onClick={handleConfirm}
+                  disabled={confirmMutation.isPending || !editedData.merchant || !editedData.date || !editedData.total || !ocrResult?.invoiceNumber}
+                  className="flex-1"
+                  data-testid="button-confirm"
+                >
+                  <Check className="mr-2 h-4 w-4" />
+                  {confirmMutation.isPending ? "Saving..." : "Accept & Save"}
+                </Button>
+              </div>
 
               <details className="mt-4">
                 <summary className="cursor-pointer text-sm text-muted-foreground hover:text-foreground">

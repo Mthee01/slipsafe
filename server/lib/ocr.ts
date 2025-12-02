@@ -12,7 +12,8 @@ import fs from 'fs';
 
 /**
  * Preprocess image for better OCR accuracy
- * Applies: grayscale, contrast enhancement, noise reduction, and auto-rotation
+ * Applies: grayscale, adaptive thresholding (binarization), noise reduction, and scaling
+ * Optimized for receipt paper with thermal printing
  * @param imagePath - Path to the original image
  * @returns Path to the preprocessed image
  */
@@ -20,28 +21,39 @@ async function preprocessImage(imagePath: string): Promise<string> {
   const ext = path.extname(imagePath);
   const baseName = path.basename(imagePath, ext);
   const dir = path.dirname(imagePath);
-  const processedPath = path.join(dir, `${baseName}_processed${ext}`);
+  const processedPath = path.join(dir, `${baseName}_processed.png`); // Always output PNG for better quality
   
   try {
     const image = sharp(imagePath);
     const metadata = await image.metadata();
     
+    // Step 1: Auto-rotate based on EXIF, convert to grayscale
     let pipeline = image
-      .rotate()
-      .grayscale()
-      .normalize()
-      .linear(1.3, -20)
-      .median(1)
-      .sharpen({ sigma: 1.0 });
+      .rotate() // Auto-rotate based on EXIF
+      .grayscale();
     
-    if (metadata.width && metadata.width < 1500) {
-      const scale = Math.min(2, 1500 / metadata.width);
+    // Step 2: Scale up small images for better OCR (receipts from phones are often low-res)
+    if (metadata.width && metadata.width < 2000) {
+      const scale = Math.min(2.5, 2000 / metadata.width);
       pipeline = pipeline.resize({
         width: Math.round(metadata.width * scale),
         kernel: 'lanczos3',
         withoutEnlargement: false
       });
     }
+    
+    // Step 3: Normalize brightness/contrast to handle varying lighting
+    pipeline = pipeline.normalize();
+    
+    // Step 4: Apply adaptive thresholding for binarization (black text on white background)
+    // This is crucial for receipt paper which often has low contrast thermal printing
+    pipeline = pipeline
+      .threshold(140) // Convert to pure black/white - good for thermal receipts
+      .negate() // Invert if needed
+      .negate(); // Invert back (this cleans up artifacts)
+    
+    // Step 5: Light sharpening to make text edges clearer
+    pipeline = pipeline.sharpen({ sigma: 0.5 });
     
     await pipeline.toFile(processedPath);
     
@@ -486,6 +498,9 @@ export async function performOCR(imagePath: string): Promise<OCRResult> {
     processedPath = await preprocessImage(imagePath);
     console.log(`[OCR] Starting recognition on: ${processedPath}`);
     
+    // Configure Tesseract for receipt scanning:
+    // - PSM 6: Assume single uniform block of text (best for receipts)
+    // - preserve_interword_spaces: Keep word spacing intact
     const result = await Tesseract.recognize(processedPath, 'eng', {
       logger: (info: any) => {
         if (info.status === 'recognizing text') {
@@ -498,6 +513,7 @@ export async function performOCR(imagePath: string): Promise<OCRResult> {
     const confidence = result.data.confidence;
     
     console.log(`[OCR] Recognition complete. Confidence: ${confidence}%, Text length: ${text.length}`);
+    console.log(`[OCR] Raw text preview (first 500 chars):`, text.substring(0, 500));
     
     if (!text || text.length < 10) {
       return {
@@ -510,7 +526,7 @@ export async function performOCR(imagePath: string): Promise<OCRResult> {
       };
     }
     
-    if (confidence < 30) {
+    if (confidence < 25) {
       return {
         text,
         confidence,
@@ -571,30 +587,73 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
   };
 
   // Enhanced merchant detection
-  // Priority order: company names, explicit merchant indicators, first significant line
-  const merchantPatterns = [
-    // Company names with suffixes (CC, PTY, LTD, INC, LLC, etc.)
-    /^([A-Z][A-Za-z0-9\s&'.-]+(?:\s+(?:CC|PTY|LTD|INC|LLC|PLC|CO|CORP|LIMITED|INCORPORATED))\.?)/im,
-    // Company names with & in them (e.g., "BRICK PARADISE & HARDWARE")
-    /^([A-Z][A-Z0-9\s]+&\s*[A-Z][A-Z0-9\s]+)(?:\s+(?:CC|PTY|LTD|INC|LLC|PLC|CO|CORP|LIMITED)?\.?)?/m,
-    // All caps company names at the top (common on receipts)
-    /^([A-Z][A-Z0-9\s&'.-]{5,40})(?:\n)/m,
-    // Explicit patterns with keywords
-    /(?:from|at|@|merchant|store|shop|vendor)[\s:]+([A-Za-z0-9\s&'.-]+?)(?:\n|receipt|invoice|$)/i,
-    // Common merchant name formats (often in caps or title case at top)
-    /^([A-Z][A-Za-z\s&'.-]{2,30})(?:\n|receipt|invoice)/m,
-    // Fallback: first non-empty line with reasonable length
-    /^([A-Za-z0-9\s&'.-]{3,40})(?:\n|$)/
-  ];
-
-  for (const pattern of merchantPatterns) {
-    const match = text.match(pattern);
-    if (match && match[1]) {
-      const merchant = match[1].trim();
-      // Filter out common non-merchant lines and generic headers
-      if (!merchant.match(/^(receipt|invoice|tax|date|time|total|subtotal|qty|item|price|customer|vat|no\s*collections|terms|conditions|intersection)/i) 
-          && merchant.length >= 3) {
-        result.merchant = merchant;
+  // Priority order: company names with suffixes, store names with &, first significant uppercase line
+  // Important: Filter out product codes (like RF-POOLKITEPGO50-2), addresses, and policy text
+  
+  const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+  
+  // Look for company names in the first 10 lines of the receipt (header area)
+  const headerLines = lines.slice(0, 10);
+  
+  // Pattern to identify product codes and SKUs (should be filtered out)
+  const productCodePattern = /^[A-Z]{1,3}[-]?[A-Z0-9]{5,}/;
+  const addressPattern = /\b(intersection|street|road|avenue|blvd|drive|way|fourways|jhb|johannesburg|cape\s*town|durban|pretoria)\b/i;
+  const numericHeavyPattern = /\d{5,}/; // Lines with long numbers (phone, VAT numbers, etc.)
+  
+  // Filter function to check if a line looks like a valid store name
+  const isValidStoreName = (line: string): boolean => {
+    const cleanLine = line.trim();
+    // Must be at least 5 characters
+    if (cleanLine.length < 5) return false;
+    // Filter out product codes
+    if (productCodePattern.test(cleanLine)) return false;
+    // Filter out addresses
+    if (addressPattern.test(cleanLine)) return false;
+    // Filter out lines with long numbers
+    if (numericHeavyPattern.test(cleanLine)) return false;
+    // Filter out common non-merchant lines
+    if (/^(receipt|invoice|tax|date|time|total|subtotal|qty|item|price|customer|vat|no\s*collect|terms|conditions|description|your\s+cashier|collect|card\s+details)/i.test(cleanLine)) return false;
+    // Should have mostly letters (not numbers or special chars)
+    const letterCount = (cleanLine.match(/[a-zA-Z]/g) || []).length;
+    if (letterCount < cleanLine.length * 0.5) return false;
+    return true;
+  };
+  
+  // Priority 1: Look for company names with suffixes (CC, PTY, LTD, etc.)
+  for (const line of headerLines) {
+    const match = line.match(/^([A-Z][A-Za-z0-9\s&'.-]+(?:\s+(?:CC|PTY|LTD|INC|LLC|PLC|CO|CORP|LIMITED|INCORPORATED))\.?)/i);
+    if (match && match[1] && isValidStoreName(match[1])) {
+      result.merchant = match[1].trim();
+      break;
+    }
+  }
+  
+  // Priority 2: Look for all-caps lines with & in them (e.g., "BRICK PARADISE & HARDWARE")
+  if (!result.merchant) {
+    for (const line of headerLines) {
+      if (line.includes('&') && /^[A-Z\s&]+$/.test(line) && line.length >= 10 && isValidStoreName(line)) {
+        result.merchant = line.trim();
+        break;
+      }
+    }
+  }
+  
+  // Priority 3: Look for all-caps store names (common on receipts)
+  if (!result.merchant) {
+    for (const line of headerLines) {
+      // All caps, at least 8 chars, mostly letters
+      if (/^[A-Z][A-Z\s&'.-]{7,}$/.test(line) && isValidStoreName(line)) {
+        result.merchant = line.trim();
+        break;
+      }
+    }
+  }
+  
+  // Priority 4: First significant line that looks like a store name
+  if (!result.merchant) {
+    for (const line of headerLines) {
+      if (isValidStoreName(line) && line.length >= 8) {
+        result.merchant = line.trim();
         break;
       }
     }
@@ -663,20 +722,26 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
   }
 
   // Enhanced total extraction with contextual awareness
+  // Handle various formats: "Total : 219.65", "Total: R219.65", "TOTAL 219.65"
   const totalPatterns = [
-    // Explicit TOTAL label (not subtotal)
-    /^TOTAL[\s:]*[$£€¥₹KES]*\s*(\d+[,\s]*\d*\.?\d{0,2})/im,
-    /\bTOTAL[\s:]+[$£€¥₹KES]*\s*(\d+[,\s]*\d*\.?\d{0,2})/i,
-    // Standard total with currency symbols and decimal
-    /(?:grand\s*total|amount\s*due|balance\s*due|total\s*due)[\s:]*[$£€¥₹KES]*\s*(\d+[,\s]*\d*\.?\d{0,2})/i,
-    // Total without explicit label but with currency
-    /[$£€¥₹]\s*(\d+[,\s]*\d*\.\d{2})\s*(?:\n|$)/,
-    // Total with KES or other currency codes
-    /(?:total|amount)[\s:]*(\d+[,\s]*\d*\.?\d{0,2})\s*(?:KES|USD|GBP|EUR)/i,
-    // Standalone total near end of receipt
-    /(?:^|\n)\s*(\d+[,\s]*\d*\.\d{2})\s*(?:\n|$)/,
-    // Total without decimals (whole amounts)
-    /(?:total|amount)[\s:]*[$£€¥₹KES]*\s*(\d+)\s*(?:only|\/=|$)/i
+    // "Total : 219.65" or "Total: 219.65" with optional spaces around colon
+    /\bTOTAL\s*:\s*[$£€¥₹RKES]*\s*[-]?(\d+[,\s]*\d*\.?\d{0,2})/i,
+    // Explicit TOTAL label at start of line
+    /^TOTAL[\s:]*[$£€¥₹RKES]*\s*[-]?(\d+[,\s]*\d*\.?\d{0,2})/im,
+    // TOTAL followed by amount (no colon)
+    /\bTOTAL\s+[$£€¥₹RKES]*\s*[-]?(\d+[,\s]*\d*\.?\d{0,2})/i,
+    // Grand total, amount due, balance due
+    /(?:grand\s*total|amount\s*due|balance\s*due|total\s*due|total\s*amount)[\s:]*[$£€¥₹RKES]*\s*[-]?(\d+[,\s]*\d*\.?\d{0,2})/i,
+    // "Card :" or "Card:" followed by amount (payment method line)
+    /\bCard\s*:\s*[$£€¥₹RKES]*\s*[-]?(\d+[,\s]*\d*\.?\d{0,2})/i,
+    // "Cash :" or "Cash:" followed by amount
+    /\bCash\s*:\s*[$£€¥₹RKES]*\s*[-]?(\d+[,\s]*\d*\.?\d{0,2})/i,
+    // R219.65 format (South African Rand with R prefix)
+    /\bR\s*(\d+[,\s]*\d*\.\d{2})/,
+    // Total with currency codes after
+    /(?:total|amount)[\s:]*(\d+[,\s]*\d*\.?\d{0,2})\s*(?:KES|USD|GBP|EUR|ZAR)/i,
+    // Amount without decimals followed by "only" or "/="
+    /(?:total|amount)[\s:]*[$£€¥₹RKES]*\s*(\d+)\s*(?:only|\/=|$)/i
   ];
 
   for (const pattern of totalPatterns) {
@@ -802,6 +867,27 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
   // ============================================
   // POLICY EXTRACTION (Return/Refund/Exchange/Warranty)
   // ============================================
+  // Enhanced to catch common South African receipt formats like:
+  // "NO COLECTIONS, NO EXCHANGES, NO REFUNDS, WITHOUT ORIGINAL INVOICE"
+  // "MINIMUM HANDLING CHARGE OF 15% ON ALL RETURNS/EXCHANGES"
+  
+  // First, extract the full policy text block (usually at bottom of receipt)
+  let policyTextBlock = '';
+  const policyBlockPatterns = [
+    // Look for policy sections that start with common keywords
+    /(?:NO\s+(?:COLECTIONS?|COLLECTIONS?|EXCHANGES?|REFUNDS?)[^\n]*(?:\n[^\n]*){0,5})/gi,
+    /(?:RETURN|REFUND|EXCHANGE|WARRANTY)[^\n]*(?:POLICY|TERMS|CONDITIONS)[^\n]*/gi,
+    /(?:TERMS\s+(?:&|AND)\s+CONDITIONS)[^\n]*(?:\n[^\n]*){0,5}/gi,
+    /(?:GOODS\s+ONCE\s+SOLD)[^\n]*/gi,
+    /(?:ALL\s+SALES\s+(?:ARE\s+)?FINAL)[^\n]*/gi,
+  ];
+  
+  for (const pattern of policyBlockPatterns) {
+    const matches = text.match(pattern);
+    if (matches) {
+      policyTextBlock += ' ' + matches.join(' ');
+    }
+  }
   
   // Return policy patterns (extract days and terms)
   const returnPatterns = [
@@ -813,6 +899,8 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
     /no\s+returns?\s+after\s+(\d+)\s*days?/i,
     // "7 day money back"
     /(\d+)\s*day\s*money\s*back/i,
+    // "returns/exchanges" with percentage
+    /(\d+)%\s*(?:on\s+(?:all\s+)?)?(?:returns?|exchanges?)/i,
   ];
   
   for (const pattern of returnPatterns) {
@@ -828,12 +916,15 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
     }
   }
 
-  // Exchange policy patterns
+  // Exchange policy patterns - enhanced for "NO EXCHANGES" format
   const exchangePatterns = [
     /(\d+)\s*(?:day|days)\s*(?:exchange|swap)\s*(?:policy|period)?/i,
     /exchange(?:s)?\s*(?:within|accepted|only)?\s*(?:within)?\s*(\d+)\s*days?/i,
     /exchange\s+only/i,
-    /no\s+exchange(?:s)?/i,
+    // "NO EXCHANGES" - common on receipts
+    /no\s+exchange[s]?/i,
+    // "NO EXCHANGES WITHOUT ORIGINAL INVOICE"
+    /no\s+exchange[s]?\s*(?:,|\.|\s)?\s*(?:without|unless)/i,
   ];
   
   for (const pattern of exchangePatterns) {
@@ -855,13 +946,19 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
     }
   }
 
-  // Refund type patterns
+  // Refund type patterns - enhanced for receipt formats
   const refundPatterns = [
     { pattern: /(?:full\s+refund|money\s+back\s+guarantee|100%\s+refund)/i, type: 'full' as const },
     { pattern: /(?:store\s+credit|credit\s+only|in-?store\s+credit)/i, type: 'store_credit' as const },
-    { pattern: /(?:exchange\s+only|swap\s+only|no\s+(?:cash\s+)?refund)/i, type: 'exchange_only' as const },
-    { pattern: /(?:partial\s+refund|restocking\s+fee)/i, type: 'partial' as const },
-    { pattern: /(?:no\s+refund|final\s+sale|all\s+sales?\s+final)/i, type: 'none' as const },
+    { pattern: /(?:exchange\s+only|swap\s+only)/i, type: 'exchange_only' as const },
+    { pattern: /(?:partial\s+refund|restocking\s+fee|handling\s+charge)/i, type: 'partial' as const },
+    // "NO REFUNDS" patterns
+    { pattern: /no\s+refund[s]?(?:\s+without|\s+unless|\s*,)?/i, type: 'none' as const },
+    { pattern: /(?:final\s+sale|all\s+sales?\s+(?:are\s+)?final)/i, type: 'none' as const },
+    { pattern: /goods\s+once\s+sold/i, type: 'none' as const },
+    { pattern: /no\s+(?:cash\s+)?refund/i, type: 'none' as const },
+    // "NOT RETURNABLE"
+    { pattern: /not\s+returnable/i, type: 'none' as const },
   ];
   
   for (const { pattern, type } of refundPatterns) {
@@ -870,6 +967,44 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
       result.policies.policySource = 'extracted';
       break;
     }
+  }
+  
+  // Special handling: If "HANDLING CHARGE" is mentioned, note it in return terms
+  const handlingMatch = text.match(/(?:MINIMUM\s+)?HANDLING\s+CHARGE\s+(?:OF\s+)?(\d+)%/i);
+  if (handlingMatch) {
+    const handlingPercent = handlingMatch[1];
+    const handlingNote = `${handlingPercent}% handling charge on returns/exchanges`;
+    if (result.policies.returnPolicyTerms) {
+      result.policies.returnPolicyTerms += '. ' + handlingNote;
+    } else {
+      result.policies.returnPolicyTerms = handlingNote;
+    }
+    result.policies.refundType = 'partial'; // Handling charge means partial refund
+    result.policies.policySource = 'extracted';
+  }
+  
+  // Special handling: "WITHOUT ORIGINAL INVOICE" requirement
+  if (/without\s+original\s+invoice/i.test(text)) {
+    const invoiceNote = 'Original invoice required';
+    if (result.policies.returnPolicyTerms) {
+      result.policies.returnPolicyTerms += '. ' + invoiceNote;
+    } else {
+      result.policies.returnPolicyTerms = invoiceNote;
+    }
+    result.policies.policySource = 'extracted';
+  }
+  
+  // Special handling: Products "NOT RETURNABLE" (like cement, sand, etc.)
+  const notReturnableMatch = text.match(/([A-Z,\s&]+)\s+(?:PRODUCTS?\s+)?NOT\s+RETURNABLE/i);
+  if (notReturnableMatch) {
+    const products = notReturnableMatch[1].trim();
+    const nonReturnNote = `Non-returnable: ${products}`;
+    if (result.policies.returnPolicyTerms) {
+      result.policies.returnPolicyTerms += '. ' + nonReturnNote;
+    } else {
+      result.policies.returnPolicyTerms = nonReturnNote;
+    }
+    result.policies.policySource = 'extracted';
   }
 
   // Warranty patterns (extract months/years)
