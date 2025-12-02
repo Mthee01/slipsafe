@@ -876,21 +876,33 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       const ocrResult = await processReceipt(req.file.path);
       
+      // Check for OCR errors
+      if (ocrResult.error && ocrResult.error.type !== 'PARTIAL_EXTRACTION') {
+        return res.status(422).json({
+          success: false,
+          error: ocrResult.error.message,
+          errorType: ocrResult.error.type,
+          suggestion: ocrResult.error.suggestion,
+          canRetry: ocrResult.error.canRetry,
+          ocrConfidence: ocrResult.ocrConfidence
+        });
+      }
+      
       // Normalize data for preview
-      const merchant = ocrResult.merchant || "Unknown Merchant";
-      const total = ocrResult.total ? ocrResult.total.toString() : "0.00";
+      const merchant = ocrResult.merchant || "";
+      const total = ocrResult.total ? ocrResult.total.toString() : "";
       
       // Parse and normalize date to ISO format using enhanced parser
       const isoDate = parseDateToISO(ocrResult.date);
       
       // Compute deadlines with merchant-specific rules
-      const deadlines = await computeDeadlines(isoDate, userId, merchant);
+      const deadlines = await computeDeadlines(isoDate, userId, merchant || "Unknown");
 
       // Store preview data server-side for later confirmation
       const previewData: PreviewData = {
-        merchant,
+        merchant: merchant || "Unknown Merchant",
         date: isoDate,
-        total,
+        total: total || "0.00",
         returnBy: deadlines.returnBy,
         warrantyEnds: deadlines.warrantyEnds,
         confidence: ocrResult.confidence,
@@ -909,12 +921,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
           returnBy: deadlines.returnBy,
           warrantyEnds: deadlines.warrantyEnds,
           confidence: ocrResult.confidence,
-          rawText: ocrResult.rawText
+          rawText: ocrResult.rawText,
+          ocrConfidence: ocrResult.ocrConfidence,
+          warnings: ocrResult.warnings,
+          hasPartialData: ocrResult.error?.type === 'PARTIAL_EXTRACTION',
+          partialDataMessage: ocrResult.error?.message,
+          partialDataSuggestion: ocrResult.error?.suggestion
         }
       });
     } catch (error: any) {
       console.error("OCR preview error:", error);
-      res.status(500).json({ error: "OCR processing failed", message: error.message });
+      res.status(500).json({ 
+        success: false,
+        error: "OCR processing failed", 
+        message: error.message,
+        suggestion: "Please try again. If the problem persists, you can enter the details manually.",
+        canRetry: true
+      });
     }
   });
 

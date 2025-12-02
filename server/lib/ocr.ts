@@ -5,32 +5,122 @@
 
 import Tesseract from 'tesseract.js';
 
+// Error types for better user feedback
+export type OCRErrorType = 
+  | 'NO_TEXT_DETECTED'
+  | 'LOW_QUALITY_IMAGE'
+  | 'PROCESSING_FAILED'
+  | 'INVALID_FORMAT'
+  | 'PARTIAL_EXTRACTION';
+
+export interface OCRError {
+  type: OCRErrorType;
+  message: string;
+  suggestion: string;
+  canRetry: boolean;
+}
+
+export const OCR_ERRORS: Record<OCRErrorType, Omit<OCRError, 'type'>> = {
+  NO_TEXT_DETECTED: {
+    message: "No text was detected in the image",
+    suggestion: "Make sure the receipt is clearly visible, well-lit, and not blurry. Try placing it on a dark, contrasting surface.",
+    canRetry: true
+  },
+  LOW_QUALITY_IMAGE: {
+    message: "The image quality is too low for accurate scanning",
+    suggestion: "Use better lighting, hold the camera steady, and ensure the receipt is in focus. Avoid shadows and glare.",
+    canRetry: true
+  },
+  PROCESSING_FAILED: {
+    message: "Something went wrong while processing the receipt",
+    suggestion: "Please try again. If the problem persists, you can enter the details manually.",
+    canRetry: true
+  },
+  INVALID_FORMAT: {
+    message: "The file format is not supported",
+    suggestion: "Please upload a JPEG, PNG, or PDF file.",
+    canRetry: false
+  },
+  PARTIAL_EXTRACTION: {
+    message: "Some receipt details couldn't be read automatically",
+    suggestion: "The fields that couldn't be detected are highlighted. Please fill them in manually.",
+    canRetry: false
+  }
+};
+
 interface ParsedReceipt {
   merchant: string | null;
   date: string | null;
   total: number | null;
   confidence: 'low' | 'medium' | 'high';
   rawText: string;
+  ocrConfidence: number;
   merchantTODO?: string;
   dateTODO?: string;
   totalTODO?: string;
+  error?: OCRError;
+  warnings: string[];
+}
+
+interface OCRResult {
+  text: string;
+  confidence: number;
+  error?: OCRError;
 }
 
 /**
  * Extract text from receipt image using OCR
  * @param imagePath - Path to uploaded image
- * @returns Extracted text
+ * @returns Extracted text with confidence score
  */
-export async function performOCR(imagePath: string): Promise<string> {
+export async function performOCR(imagePath: string): Promise<OCRResult> {
   try {
     const result = await Tesseract.recognize(imagePath, 'eng', {
-      logger: (info: any) => console.log('OCR Progress:', info)
+      logger: (info: any) => {
+        if (info.status === 'recognizing text') {
+          console.log(`OCR Progress: ${Math.round(info.progress * 100)}%`);
+        }
+      }
     });
     
-    return result.data.text;
+    const text = result.data.text.trim();
+    const confidence = result.data.confidence;
+    
+    // Check for no text detected
+    if (!text || text.length < 10) {
+      return {
+        text: '',
+        confidence: 0,
+        error: {
+          type: 'NO_TEXT_DETECTED',
+          ...OCR_ERRORS.NO_TEXT_DETECTED
+        }
+      };
+    }
+    
+    // Check for low quality based on confidence
+    if (confidence < 40) {
+      return {
+        text,
+        confidence,
+        error: {
+          type: 'LOW_QUALITY_IMAGE',
+          ...OCR_ERRORS.LOW_QUALITY_IMAGE
+        }
+      };
+    }
+    
+    return { text, confidence };
   } catch (error) {
     console.error('OCR failed:', error);
-    throw new Error('OCR processing failed');
+    return {
+      text: '',
+      confidence: 0,
+      error: {
+        type: 'PROCESSING_FAILED',
+        ...OCR_ERRORS.PROCESSING_FAILED
+      }
+    };
   }
 }
 
@@ -38,15 +128,18 @@ export async function performOCR(imagePath: string): Promise<string> {
  * Parse receipt text to extract merchant, date, and total
  * Uses regex and heuristics with fallback handling
  * @param text - OCR extracted text
+ * @param ocrConfidence - Confidence score from OCR (0-100)
  * @returns Parsed receipt data
  */
-export function parseReceiptText(text: string): ParsedReceipt {
+export function parseReceiptText(text: string, ocrConfidence: number = 0): ParsedReceipt {
   const result: ParsedReceipt = {
     merchant: null,
     date: null,
     total: null,
     confidence: 'low',
-    rawText: text
+    rawText: text,
+    ocrConfidence,
+    warnings: []
   };
 
   // Enhanced merchant detection
@@ -168,18 +261,54 @@ export function parseReceiptText(text: string): ParsedReceipt {
  * @returns Parsed receipt data
  */
 export async function processReceipt(imagePath: string): Promise<ParsedReceipt> {
-  const text = await performOCR(imagePath);
-  const parsed = parseReceiptText(text);
+  const ocrResult = await performOCR(imagePath);
   
-  // Add TODO flags for missing fields
+  // Handle OCR errors
+  if (ocrResult.error) {
+    return {
+      merchant: null,
+      date: null,
+      total: null,
+      confidence: 'low',
+      rawText: ocrResult.text,
+      ocrConfidence: ocrResult.confidence,
+      error: ocrResult.error,
+      warnings: []
+    };
+  }
+  
+  const parsed = parseReceiptText(ocrResult.text, ocrResult.confidence);
+  
+  // Add TODO flags and warnings for missing fields
+  const missingFields: string[] = [];
+  
   if (!parsed.merchant) {
     parsed.merchantTODO = 'Manual entry required - OCR could not detect merchant';
+    missingFields.push('merchant name');
   }
   if (!parsed.date) {
     parsed.dateTODO = 'Manual entry required - OCR could not detect date';
+    missingFields.push('purchase date');
   }
   if (!parsed.total) {
     parsed.totalTODO = 'Manual entry required - OCR could not detect total';
+    missingFields.push('total amount');
+  }
+  
+  // Add partial extraction error if some fields are missing
+  if (missingFields.length > 0 && missingFields.length < 3) {
+    parsed.warnings.push(`Could not detect: ${missingFields.join(', ')}`);
+    parsed.error = {
+      type: 'PARTIAL_EXTRACTION',
+      ...OCR_ERRORS.PARTIAL_EXTRACTION
+    };
+  } else if (missingFields.length === 3) {
+    // All fields missing despite having text
+    parsed.error = {
+      type: 'LOW_QUALITY_IMAGE',
+      ...OCR_ERRORS.LOW_QUALITY_IMAGE
+    };
+    parsed.warnings.push('No receipt information could be extracted from the image');
   }
 
   return parsed;

@@ -13,6 +13,7 @@ Preferred communication style: Simple, everyday language.
 - **Framework**: React 18 with TypeScript, Vite, Wouter for routing, and TanStack React Query for state management.
 - **UI/UX**: Utilizes Shadcn/ui (Radix UI primitives) and Tailwind CSS with a Material Design-inspired aesthetic focusing on utility and clarity. Features an indigo/teal gradient branding with a 3D shield logo symbolizing security.
 - **PWA Capabilities**: Full PWA implementation including a manifest, service worker for offline support (cache-first for assets, network-first with offline fallback for APIs, two-step background sync for uploads), IndexedDB for offline data persistence, an offline indicator, and an install prompt.
+- **Camera Features**: 4K resolution capture with receipt frame guide overlay, tap-to-focus with animated focus indicator (yellow when focusing, green when locked), flash/torch control, real-time image quality assessment (sharpness, brightness, contrast), multi-part capture mode for long receipts, and quality gating with actionable feedback.
 - **Accessibility**: WCAG 2.1 Level AA compliant with proper HTML5 autocomplete attributes and `autoComplete="off"` for sensitive fields.
 - **Error Handling**: Custom `ApiError` class for user-friendly error messages from API responses.
 
@@ -24,7 +25,9 @@ Preferred communication style: Simple, everyday language.
 - **Email Verification**: Registration requires email verification before login. Verification tokens expire after 24 hours. Welcome email sent after verification (includes username only, NOT password for security). Resend verification option available on login page and registration-success page.
 - **Email System**: Integrates with Resend for professional HTML email delivery for email verification, welcome confirmation, and account recovery (forgot username/password), featuring SlipSafe branding and security measures like rate limiting and token expiration.
 - **Context Switching**: Business accounts can toggle between personal and business modes to manage receipts separately, with the active context persisting across sessions. The sidebar displays the business name prominently when in business mode, and the user's full name in personal mode.
-- **Tax & Reports**: Comprehensive reporting system (`/api/reports`) for business users with tax/VAT summaries, expense categorization by category and vendor, monthly trends with visual charts (Recharts), and CSV export functionality.
+- **Reports**: Two-tier reporting system:
+  - **Personal Users** (`/api/reports/personal`): Dashboard showing total receipts, total spent, pending returns, active warranties, upcoming return deadlines, expiring warranties, spending by category (pie chart), warranty status breakdown (pie chart), and monthly spending trends (bar chart).
+  - **Business Users** (`/api/reports/summary`): Comprehensive tax/VAT summaries, expense categorization by category and vendor, monthly trends with visual charts (Recharts), CSV export, and PDF report generation with optional transaction details.
 
 **Data Storage**:
 - **Database**: PostgreSQL, primarily via Neon serverless driver with Drizzle ORM, for persistent storage of users, purchases, and settings.

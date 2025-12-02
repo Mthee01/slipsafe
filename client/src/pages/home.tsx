@@ -9,9 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { useOnlineStatus } from "@/hooks/use-online-status";
+import { useImageQuality, type ImageQualityResult } from "@/hooks/use-image-quality";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
-import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info } from "lucide-react";
+import { Upload, FileText, Clock, DollarSign, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw } from "lucide-react";
 import { CATEGORIES, type Purchase, type ConfidenceLevel } from "@shared/schema";
+import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
   DialogContent,
@@ -57,11 +59,28 @@ export default function Home() {
   const [stream, setStream] = useState<MediaStream | null>(null);
   const [flashEnabled, setFlashEnabled] = useState(false);
   const [flashSupported, setFlashSupported] = useState(false);
+  const [focusPoint, setFocusPoint] = useState<{ x: number; y: number } | null>(null);
+  const [isFocusing, setIsFocusing] = useState(false);
+  const [focusLocked, setFocusLocked] = useState(false);
+  const [captureMode, setCaptureMode] = useState<"single" | "multi">("single");
+  const [multiPartCaptures, setMultiPartCaptures] = useState<{ blob: Blob; section: string }[]>([]);
+  const [currentSection, setCurrentSection] = useState<"top" | "middle" | "bottom">("top");
+  const [previewQuality, setPreviewQuality] = useState<ImageQualityResult | null>(null);
+  const [showQualityPreview, setShowQualityPreview] = useState(false);
+  const [capturedPreview, setCapturedPreview] = useState<string | null>(null);
   const { toast } = useToast();
+  const { analyzeImage, resetQuality } = useImageQuality();
   const isOnline = useOnlineStatus();
   const queryClient = useQueryClient();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  const [ocrError, setOcrError] = useState<{
+    message: string;
+    suggestion: string;
+    canRetry: boolean;
+    errorType?: string;
+  } | null>(null);
 
   const previewMutation = useMutation({
     mutationFn: async (file: File) => {
@@ -73,29 +92,59 @@ export default function Home() {
         body: formData,
       });
       
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.message || "OCR processing failed");
+      const data = await response.json();
+      
+      if (!response.ok || !data.success) {
+        throw {
+          message: data.error || "OCR processing failed",
+          suggestion: data.suggestion || "Please try again",
+          canRetry: data.canRetry !== false,
+          errorType: data.errorType,
+          isOcrError: true
+        };
       }
       
-      return response.json();
+      return data;
     },
     onSuccess: (data) => {
+      setOcrError(null);
       setOcrResult(data.ocrData);
       setEditedData({
-        merchant: data.ocrData.merchant,
-        date: data.ocrData.date,
-        total: data.ocrData.total,
+        merchant: data.ocrData.merchant || "",
+        date: data.ocrData.date || "",
+        total: data.ocrData.total || "",
       });
-      toast({
-        title: "Receipt scanned",
-        description: "Review and edit the extracted data below",
-      });
+      
+      if (data.ocrData.hasPartialData) {
+        toast({
+          title: "Partial scan complete",
+          description: data.ocrData.partialDataMessage || "Some fields need manual entry",
+        });
+      } else {
+        toast({
+          title: "Receipt scanned",
+          description: "Review and edit the extracted data below",
+        });
+      }
     },
-    onError: (error: Error) => {
+    onError: (error: any) => {
+      if (error.isOcrError) {
+        setOcrError({
+          message: error.message,
+          suggestion: error.suggestion,
+          canRetry: error.canRetry,
+          errorType: error.errorType
+        });
+      } else {
+        setOcrError({
+          message: "Something went wrong",
+          suggestion: "Please try again or enter details manually",
+          canRetry: true
+        });
+      }
       toast({
-        title: "OCR failed",
-        description: error.message,
+        title: "Scan failed",
+        description: error.message || "OCR processing failed",
         variant: "destructive",
       });
     },
@@ -250,6 +299,7 @@ export default function Home() {
     setOcrResult(null);
     setEditedData(null);
     setSavedPurchase(null);
+    setOcrError(null);
     
     const reader = new FileReader();
     reader.onload = (e) => {
@@ -294,6 +344,9 @@ export default function Home() {
   const handleClearFile = () => {
     setSelectedFile(null);
     setPreviewUrl(null);
+    setOcrError(null);
+    setOcrResult(null);
+    setEditedData(null);
   };
 
   const handlePreview = () => {
@@ -314,21 +367,32 @@ export default function Home() {
 
   const openCamera = async () => {
     try {
-      const mediaStream = await navigator.mediaDevices.getUserMedia({
-        video: {
+      const videoConstraints: MediaTrackConstraints & { focusMode?: string } = {
           facingMode: "environment",
           width: { ideal: 3840, min: 1920 },
           height: { ideal: 2160, min: 1080 },
           aspectRatio: { ideal: 4/3 },
-        },
+        };
+      
+      const mediaStream = await navigator.mediaDevices.getUserMedia({
+        video: videoConstraints,
         audio: false,
       });
+      
+      const videoTrack = mediaStream.getVideoTracks()[0];
+      try {
+        await videoTrack.applyConstraints({
+          advanced: [{ focusMode: 'continuous' } as any]
+        });
+      } catch {
+      }
       
       setStream(mediaStream);
       setShowCamera(true);
       setFlashEnabled(false);
+      setFocusPoint(null);
+      setFocusLocked(false);
       
-      const videoTrack = mediaStream.getVideoTracks()[0];
       const capabilities = videoTrack.getCapabilities?.() as any;
       setFlashSupported(!!capabilities?.torch);
       
@@ -345,6 +409,58 @@ export default function Home() {
         variant: "destructive",
       });
     }
+  };
+
+  const handleTapToFocus = async (e: React.MouseEvent<HTMLDivElement> | React.TouchEvent<HTMLDivElement>) => {
+    if (!stream || !videoRef.current) return;
+    
+    const videoElement = videoRef.current;
+    const rect = videoElement.getBoundingClientRect();
+    
+    let clientX: number, clientY: number;
+    if ('touches' in e) {
+      clientX = e.touches[0].clientX;
+      clientY = e.touches[0].clientY;
+    } else {
+      clientX = e.clientX;
+      clientY = e.clientY;
+    }
+    
+    const x = ((clientX - rect.left) / rect.width) * 100;
+    const y = ((clientY - rect.top) / rect.height) * 100;
+    
+    setFocusPoint({ x, y });
+    setIsFocusing(true);
+    setFocusLocked(false);
+    
+    const videoTrack = stream.getVideoTracks()[0];
+    const capabilities = videoTrack.getCapabilities?.() as any;
+    
+    if (capabilities?.focusMode?.includes('manual') || capabilities?.focusMode?.includes('single-shot')) {
+      try {
+        const focusX = (clientX - rect.left) / rect.width;
+        const focusY = (clientY - rect.top) / rect.height;
+        
+        await videoTrack.applyConstraints({
+          advanced: [{
+            focusMode: 'single-shot',
+            pointsOfInterest: [{ x: focusX, y: focusY }]
+          } as any]
+        });
+      } catch (err) {
+        console.log('Focus point not supported, using continuous focus');
+      }
+    }
+    
+    setTimeout(() => {
+      setIsFocusing(false);
+      setFocusLocked(true);
+    }, 800);
+    
+    setTimeout(() => {
+      setFocusPoint(null);
+      setFocusLocked(false);
+    }, 2500);
   };
 
   const toggleFlash = async () => {
@@ -371,6 +487,13 @@ export default function Home() {
       setStream(null);
     }
     setShowCamera(false);
+    setCaptureMode("single");
+    setMultiPartCaptures([]);
+    setCurrentSection("top");
+    setShowQualityPreview(false);
+    setCapturedPreview(null);
+    setPreviewQuality(null);
+    resetQuality();
   };
 
   const capturePhoto = () => {
@@ -385,15 +508,77 @@ export default function Home() {
       if (ctx) {
         ctx.drawImage(video, 0, 0);
         
-        canvas.toBlob((blob) => {
-          if (blob) {
-            const file = new File([blob], `receipt-${Date.now()}.jpg`, { type: 'image/jpeg' });
-            handleFileSelect(file);
-            closeCamera();
-          }
-        }, 'image/jpeg', 0.95);
+        const quality = analyzeImage(canvas);
+        setPreviewQuality(quality);
+        setCapturedPreview(canvas.toDataURL('image/jpeg', 0.95));
+        setShowQualityPreview(true);
       }
     }
+  };
+
+  const confirmCapture = () => {
+    if (!canvasRef.current) return;
+    
+    const canvas = canvasRef.current;
+    
+    canvas.toBlob((blob) => {
+      if (blob) {
+        if (captureMode === "multi") {
+          const newCapture = { blob, section: currentSection };
+          const updatedCaptures = [...multiPartCaptures, newCapture];
+          setMultiPartCaptures(updatedCaptures);
+          
+          if (currentSection === "bottom" || updatedCaptures.length >= 3) {
+            finalizeMultiPartCapture(updatedCaptures);
+          } else {
+            if (currentSection === "top") {
+              setCurrentSection("middle");
+            } else if (currentSection === "middle") {
+              setCurrentSection("bottom");
+            }
+            
+            setShowQualityPreview(false);
+            setCapturedPreview(null);
+            setPreviewQuality(null);
+          }
+        } else {
+          const file = new File([blob], `receipt-${Date.now()}.jpg`, { type: 'image/jpeg' });
+          handleFileSelect(file);
+          closeCamera();
+        }
+      }
+    }, 'image/jpeg', 0.95);
+  };
+
+  const retakePhoto = () => {
+    setShowQualityPreview(false);
+    setCapturedPreview(null);
+    setPreviewQuality(null);
+  };
+
+  const finalizeMultiPartCapture = (captures: { blob: Blob; section: string }[]) => {
+    if (captures.length === 0) return;
+    
+    const firstCapture = captures[0];
+    const file = new File([firstCapture.blob], `receipt-multi-${Date.now()}.jpg`, { type: 'image/jpeg' });
+    
+    if (captures.length > 1) {
+      toast({
+        title: "Multi-part capture complete",
+        description: `Captured ${captures.length} sections. Processing first section for OCR. Full stitching coming soon.`,
+      });
+    }
+    
+    handleFileSelect(file);
+    closeCamera();
+  };
+
+  const resetMultiPartCapture = () => {
+    setMultiPartCaptures([]);
+    setCurrentSection("top");
+    setShowQualityPreview(false);
+    setCapturedPreview(null);
+    setPreviewQuality(null);
   };
 
   return (
@@ -517,6 +702,63 @@ export default function Home() {
             >
               {previewMutation.isPending ? "Processing..." : "Scan Receipt"}
             </Button>
+
+            {ocrError && (
+              <div className="mt-4 p-4 bg-destructive/10 border border-destructive/20 rounded-lg space-y-3" data-testid="container-ocr-error">
+                <div className="flex items-start gap-3">
+                  <XCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
+                  <div className="space-y-1">
+                    <p className="font-medium text-destructive" data-testid="text-ocr-error-title">
+                      {ocrError.message}
+                    </p>
+                    <p className="text-sm text-muted-foreground" data-testid="text-ocr-error-suggestion">
+                      {ocrError.suggestion}
+                    </p>
+                  </div>
+                </div>
+                <div className="flex gap-2 pt-2">
+                  {ocrError.canRetry && (
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => {
+                        setOcrError(null);
+                        if (selectedFile) previewMutation.mutate(selectedFile);
+                      }}
+                      data-testid="button-retry-ocr"
+                    >
+                      <RotateCcw className="h-4 w-4 mr-2" />
+                      Retry Scan
+                    </Button>
+                  )}
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setOcrError(null);
+                      setOcrResult({
+                        merchant: "",
+                        date: "",
+                        total: "",
+                        confidence: "low",
+                        rawText: "",
+                        returnBy: "",
+                        warrantyEnds: ""
+                      });
+                      setEditedData({
+                        merchant: "",
+                        date: new Date().toISOString().split('T')[0],
+                        total: ""
+                      });
+                    }}
+                    data-testid="button-manual-entry"
+                  >
+                    <Edit className="h-4 w-4 mr-2" />
+                    Enter Manually
+                  </Button>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -711,90 +953,287 @@ export default function Home() {
               <DialogHeader>
                 <DialogTitle className="flex items-center gap-2">
                   <Camera className="h-5 w-5" />
-                  Capture Receipt
+                  {showQualityPreview ? "Review Photo Quality" : "Capture Receipt"}
                 </DialogTitle>
                 <DialogDescription>
-                  Position the entire receipt within the frame for best results
+                  {showQualityPreview 
+                    ? "Check the image quality before processing" 
+                    : captureMode === "multi" 
+                      ? `Capture ${currentSection} section of receipt (${multiPartCaptures.length + 1}/3)`
+                      : "Position the entire receipt within the frame for best results"
+                  }
                 </DialogDescription>
               </DialogHeader>
             </div>
             
-            <div className="relative">
-              <div className="relative bg-black" style={{ aspectRatio: '4/3' }}>
-                <video
-                  ref={videoRef}
-                  autoPlay
-                  playsInline
-                  muted
-                  className="w-full h-full object-cover"
-                  data-testid="video-camera"
-                />
-                
-                <div className="absolute inset-0 pointer-events-none">
-                  <div className="absolute inset-4 sm:inset-8 border-2 border-white/60 rounded-lg">
-                    <div className="absolute -top-px -left-px w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg" />
-                    <div className="absolute -top-px -right-px w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg" />
-                    <div className="absolute -bottom-px -left-px w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg" />
-                    <div className="absolute -bottom-px -right-px w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg" />
+            {!showQualityPreview && (
+              <div className="flex gap-2 p-3 border-b bg-muted/30">
+                <Button
+                  variant={captureMode === "single" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => { setCaptureMode("single"); resetMultiPartCapture(); }}
+                  data-testid="button-single-mode"
+                >
+                  Single Photo
+                </Button>
+                <Button
+                  variant={captureMode === "multi" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => { setCaptureMode("multi"); resetMultiPartCapture(); }}
+                  data-testid="button-multi-mode"
+                >
+                  <Plus className="h-4 w-4 mr-1" />
+                  Long Receipt (Multi-Part)
+                </Button>
+                {captureMode === "multi" && multiPartCaptures.length > 0 && (
+                  <div className="flex items-center gap-1 ml-auto">
+                    {["top", "middle", "bottom"].map((section) => (
+                      <Badge 
+                        key={section}
+                        variant={multiPartCaptures.some(c => c.section === section) ? "default" : "outline"}
+                        className="text-xs"
+                      >
+                        {section}
+                      </Badge>
+                    ))}
                   </div>
-                  
-                  <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5" data-testid="text-camera-guidance">
-                    <Focus className="h-3 w-3" />
-                    Align receipt edges with the frame
-                  </div>
-                </div>
-                
-                {flashSupported && (
-                  <Button
-                    onClick={toggleFlash}
-                    variant="ghost"
-                    size="icon"
-                    className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white"
-                    data-testid="button-flash"
-                  >
-                    {flashEnabled ? (
-                      <Flashlight className="h-5 w-5 text-yellow-400" />
-                    ) : (
-                      <FlashlightOff className="h-5 w-5" />
-                    )}
-                  </Button>
                 )}
               </div>
+            )}
+            
+            <div className="relative">
+              {showQualityPreview && capturedPreview ? (
+                <div className="relative bg-black" style={{ aspectRatio: '4/3' }}>
+                  <img 
+                    src={capturedPreview} 
+                    alt="Captured receipt" 
+                    className="w-full h-full object-contain"
+                    data-testid="img-preview"
+                  />
+                </div>
+              ) : (
+                <div 
+                  className="relative bg-black cursor-crosshair" 
+                  style={{ aspectRatio: '4/3' }}
+                  onClick={handleTapToFocus}
+                  onTouchStart={handleTapToFocus}
+                  data-testid="container-camera-view"
+                >
+                  <video
+                    ref={videoRef}
+                    autoPlay
+                    playsInline
+                    muted
+                    className="w-full h-full object-cover"
+                    data-testid="video-camera"
+                  />
+                  
+                  <div className="absolute inset-0 pointer-events-none">
+                    <div className="absolute inset-4 sm:inset-8 border-2 border-white/60 rounded-lg">
+                      <div className="absolute -top-px -left-px w-6 h-6 border-t-4 border-l-4 border-white rounded-tl-lg" />
+                      <div className="absolute -top-px -right-px w-6 h-6 border-t-4 border-r-4 border-white rounded-tr-lg" />
+                      <div className="absolute -bottom-px -left-px w-6 h-6 border-b-4 border-l-4 border-white rounded-bl-lg" />
+                      <div className="absolute -bottom-px -right-px w-6 h-6 border-b-4 border-r-4 border-white rounded-br-lg" />
+                    </div>
+                    
+                    <div className="absolute top-2 left-1/2 -translate-x-1/2 bg-black/70 text-white text-xs px-3 py-1.5 rounded-full flex items-center gap-1.5" data-testid="text-camera-guidance">
+                      <Focus className="h-3 w-3" />
+                      {captureMode === "multi" 
+                        ? `Capture the ${currentSection.toUpperCase()} of the receipt`
+                        : "Tap to focus on receipt"
+                      }
+                    </div>
+                  </div>
+                  
+                  {focusPoint && (
+                    <div 
+                      className="absolute pointer-events-none z-10"
+                      style={{ 
+                        left: `${focusPoint.x}%`, 
+                        top: `${focusPoint.y}%`,
+                        transform: 'translate(-50%, -50%)'
+                      }}
+                      data-testid="focus-indicator"
+                    >
+                      <div className={`relative ${isFocusing ? 'animate-pulse' : ''}`}>
+                        <div className={`w-16 h-16 border-2 rounded-lg transition-all duration-300 ${
+                          focusLocked 
+                            ? 'border-green-400 scale-90' 
+                            : isFocusing 
+                              ? 'border-yellow-400 scale-110' 
+                              : 'border-white'
+                        }`}>
+                          <div className="absolute top-1/2 left-0 w-3 h-0.5 transform -translate-y-1/2" 
+                               style={{ backgroundColor: focusLocked ? '#4ade80' : isFocusing ? '#facc15' : 'white' }} />
+                          <div className="absolute top-1/2 right-0 w-3 h-0.5 transform -translate-y-1/2" 
+                               style={{ backgroundColor: focusLocked ? '#4ade80' : isFocusing ? '#facc15' : 'white' }} />
+                          <div className="absolute left-1/2 top-0 w-0.5 h-3 transform -translate-x-1/2" 
+                               style={{ backgroundColor: focusLocked ? '#4ade80' : isFocusing ? '#facc15' : 'white' }} />
+                          <div className="absolute left-1/2 bottom-0 w-0.5 h-3 transform -translate-x-1/2" 
+                               style={{ backgroundColor: focusLocked ? '#4ade80' : isFocusing ? '#facc15' : 'white' }} />
+                        </div>
+                        {focusLocked && (
+                          <div className="absolute -bottom-6 left-1/2 -translate-x-1/2 bg-green-500 text-white text-xs px-2 py-0.5 rounded whitespace-nowrap">
+                            Focused
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  
+                  {!focusPoint && (
+                    <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 pointer-events-none z-10">
+                      <div className="w-20 h-20 border border-white/30 rounded-lg flex items-center justify-center">
+                        <div className="w-1 h-1 bg-white/50 rounded-full" />
+                      </div>
+                    </div>
+                  )}
+                  
+                  {flashSupported && (
+                    <Button
+                      onClick={(e) => { e.stopPropagation(); toggleFlash(); }}
+                      variant="ghost"
+                      size="icon"
+                      className="absolute top-2 right-2 bg-black/50 hover:bg-black/70 text-white"
+                      data-testid="button-flash"
+                    >
+                      {flashEnabled ? (
+                        <Flashlight className="h-5 w-5 text-yellow-400" />
+                      ) : (
+                        <FlashlightOff className="h-5 w-5" />
+                      )}
+                    </Button>
+                  )}
+                </div>
+              )}
               
-              <div className="p-3 bg-muted/50 border-t" data-testid="container-camera-tips">
-                <div className="flex items-start gap-2 text-xs text-muted-foreground">
-                  <Info className="h-4 w-4 mt-0.5 shrink-0" />
-                  <div className="space-y-1">
-                    <p className="font-medium text-foreground" data-testid="text-tips-title">Tips for best results:</p>
-                    <ul className="space-y-0.5" data-testid="list-camera-tips">
-                      <li>Place receipt on a flat, contrasting surface</li>
-                      <li>Ensure good lighting (use flash if needed)</li>
-                      <li>Keep camera steady and parallel to receipt</li>
-                      <li>Make sure all text is readable and not blurry</li>
-                    </ul>
+              {showQualityPreview && previewQuality ? (
+                <div className="p-4 bg-muted/50 border-t space-y-3" data-testid="container-quality-feedback">
+                  <div className="flex items-center gap-3">
+                    {previewQuality.status === "good" ? (
+                      <CheckCircle className="h-6 w-6 text-green-500" />
+                    ) : previewQuality.status === "acceptable" ? (
+                      <AlertTriangle className="h-6 w-6 text-yellow-500" />
+                    ) : (
+                      <XCircle className="h-6 w-6 text-red-500" />
+                    )}
+                    <div className="flex-1">
+                      <p className="font-medium" data-testid="text-quality-status">
+                        {previewQuality.status === "good" 
+                          ? "Great quality! Ready to scan." 
+                          : previewQuality.status === "acceptable"
+                            ? "Acceptable quality. May need manual corrections."
+                            : "Poor quality. Consider retaking."
+                        }
+                      </p>
+                      <div className="flex items-center gap-2 mt-1">
+                        <Progress value={previewQuality.overallScore} className="h-2 flex-1" />
+                        <span className="text-xs text-muted-foreground">{previewQuality.overallScore}%</span>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  {previewQuality.issues.length > 0 && (
+                    <div className="text-sm space-y-1">
+                      <p className="font-medium text-muted-foreground">Issues detected:</p>
+                      <ul className="space-y-1" data-testid="list-quality-issues">
+                        {previewQuality.issues.map((issue, i) => (
+                          <li key={i} className="flex items-center gap-2 text-muted-foreground">
+                            <AlertTriangle className="h-3 w-3 text-yellow-500" />
+                            {issue}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                  
+                  {previewQuality.suggestions.length > 0 && previewQuality.status !== "good" && (
+                    <div className="text-sm space-y-1">
+                      <p className="font-medium text-muted-foreground">Suggestions:</p>
+                      <ul className="space-y-1" data-testid="list-quality-suggestions">
+                        {previewQuality.suggestions.map((suggestion, i) => (
+                          <li key={i} className="flex items-center gap-2 text-muted-foreground">
+                            <Info className="h-3 w-3 text-blue-500" />
+                            {suggestion}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="p-3 bg-muted/50 border-t" data-testid="container-camera-tips">
+                  <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                    <Info className="h-4 w-4 mt-0.5 shrink-0" />
+                    <div className="space-y-1">
+                      <p className="font-medium text-foreground" data-testid="text-tips-title">Tips for best results:</p>
+                      <ul className="space-y-0.5" data-testid="list-camera-tips">
+                        <li>Place receipt on a flat, contrasting surface</li>
+                        <li>Ensure good lighting (use flash if needed)</li>
+                        <li>Keep camera steady and parallel to receipt</li>
+                        <li>Make sure all text is readable and not blurry</li>
+                      </ul>
+                    </div>
                   </div>
                 </div>
-              </div>
+              )}
             </div>
             
             <div className="flex gap-2 p-4 border-t bg-background">
-              <Button
-                onClick={capturePhoto}
-                className="flex-1"
-                size="lg"
-                data-testid="button-capture"
-              >
-                <Camera className="h-5 w-5 mr-2" />
-                Capture Photo
-              </Button>
-              <Button
-                onClick={closeCamera}
-                variant="outline"
-                size="lg"
-                data-testid="button-cancel-camera"
-              >
-                Cancel
-              </Button>
+              {showQualityPreview ? (
+                <>
+                  <Button
+                    onClick={retakePhoto}
+                    variant="outline"
+                    size="lg"
+                    data-testid="button-retake"
+                  >
+                    <RotateCcw className="h-5 w-5 mr-2" />
+                    Retake
+                  </Button>
+                  <Button
+                    onClick={confirmCapture}
+                    className="flex-1"
+                    size="lg"
+                    data-testid="button-confirm-capture"
+                  >
+                    {previewQuality?.status === "poor" ? (
+                      <>
+                        <AlertTriangle className="h-5 w-5 mr-2" />
+                        Use Anyway
+                      </>
+                    ) : (
+                      <>
+                        <Check className="h-5 w-5 mr-2" />
+                        {captureMode === "multi" && currentSection !== "bottom" 
+                          ? `Confirm & Capture ${currentSection === "top" ? "Middle" : "Bottom"}`
+                          : "Confirm & Scan"
+                        }
+                      </>
+                    )}
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    onClick={capturePhoto}
+                    className="flex-1"
+                    size="lg"
+                    data-testid="button-capture"
+                  >
+                    <Camera className="h-5 w-5 mr-2" />
+                    Capture Photo
+                  </Button>
+                  <Button
+                    onClick={closeCamera}
+                    variant="outline"
+                    size="lg"
+                    data-testid="button-cancel-camera"
+                  >
+                    Cancel
+                  </Button>
+                </>
+              )}
             </div>
           </DialogContent>
         </Dialog>
