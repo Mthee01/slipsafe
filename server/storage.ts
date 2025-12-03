@@ -87,6 +87,7 @@ export interface IStorage {
   getClaimById(id: string): Promise<Claim | undefined>;
   getClaimByCode(claimCode: string): Promise<Claim | undefined>;
   getClaimsByUser(userId: string): Promise<Claim[]>;
+  getClaimsByUserAndContext(userId: string, context: string): Promise<Claim[]>;
   getClaimsByPurchase(purchaseId: string): Promise<Claim[]>;
   updateClaimState(id: string, state: string, redeemedBy?: { merchantId?: string; userId?: string }, redeemedAmount?: string): Promise<Claim | undefined>;
   getActiveClaims(userId: string): Promise<Claim[]>;
@@ -760,6 +761,24 @@ export class DatabaseStorage implements IStorage {
     return db.select().from(claims)
       .where(eq(claims.userId, userId))
       .orderBy(desc(claims.createdAt));
+  }
+
+  async getClaimsByUserAndContext(userId: string, context: string): Promise<Claim[]> {
+    // Get claims that belong to purchases with matching context
+    // For personal context, also include claims on purchases with null/undefined context (legacy data)
+    const result = await db.select({ claim: claims, purchaseContext: purchases.context })
+      .from(claims)
+      .innerJoin(purchases, eq(claims.purchaseId, purchases.id))
+      .where(eq(claims.userId, userId))
+      .orderBy(desc(claims.createdAt));
+    
+    // Filter by context, treating null/undefined as 'personal'
+    return result
+      .filter(r => {
+        const purchaseContext = r.purchaseContext || 'personal';
+        return purchaseContext === context;
+      })
+      .map(r => r.claim);
   }
 
   async getClaimsByPurchase(purchaseId: string): Promise<Claim[]> {

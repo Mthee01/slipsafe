@@ -95,9 +95,13 @@ interface ReportsResponse {
 const PERSONAL_COLORS = ["#4f46e5", "#0ea5e9", "#10b981", "#f59e0b", "#ef4444", "#8b5cf6", "#ec4899", "#06b6d4"];
 
 function PersonalReportsDashboard() {
+  const { user } = useAuth();
   const { data, isLoading } = useQuery<PersonalReportsResponse>({
     queryKey: ["/api/reports/personal"],
   });
+  
+  // Check if user already has a business account (dual user)
+  const isAlreadyBusinessAccount = user?.accountType === "business";
 
   if (isLoading) {
     return (
@@ -472,29 +476,31 @@ function PersonalReportsDashboard() {
           </CardContent>
         </Card>
 
-        {/* Upgrade CTA */}
-        <Card className="bg-gradient-to-r from-indigo-500/10 to-cyan-500/10 border-indigo-500/20">
-          <CardContent className="p-6">
-            <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-              <div className="flex items-center gap-4">
-                <div className="h-12 w-12 rounded-full bg-indigo-500/20 flex items-center justify-center">
-                  <Building2 className="h-6 w-6 text-indigo-500" />
+        {/* Upgrade CTA - Only show for individual accounts (not for dual users who already have business) */}
+        {!isAlreadyBusinessAccount && (
+          <Card className="bg-gradient-to-r from-indigo-500/10 to-cyan-500/10 border-indigo-500/20">
+            <CardContent className="p-6">
+              <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-4">
+                  <div className="h-12 w-12 rounded-full bg-indigo-500/20 flex items-center justify-center">
+                    <Building2 className="h-6 w-6 text-indigo-500" />
+                  </div>
+                  <div>
+                    <h3 className="font-semibold">Need Tax & VAT Reports?</h3>
+                    <p className="text-sm text-muted-foreground">
+                      Upgrade to a business account for comprehensive tax reporting, VAT summaries, and PDF exports.
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="font-semibold">Need Tax & VAT Reports?</h3>
-                  <p className="text-sm text-muted-foreground">
-                    Upgrade to a business account for comprehensive tax reporting, VAT summaries, and PDF exports.
-                  </p>
-                </div>
+                <Button asChild>
+                  <a href="/upgrade-to-business" data-testid="button-upgrade-account">
+                    Upgrade Account
+                  </a>
+                </Button>
               </div>
-              <Button asChild>
-                <a href="/upgrade-to-business" data-testid="button-upgrade-account">
-                  Upgrade Account
-                </a>
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+        )}
       </div>
     </div>
   );
@@ -508,16 +514,17 @@ export default function Reports() {
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
 
   const isBusinessAccount = user?.accountType === "business";
+  const isBusinessContext = user?.activeContext === "business";
 
   const { data, isLoading, refetch } = useQuery<ReportsResponse>({
     queryKey: ["/api/reports/summary", { startDate, endDate }],
-    enabled: isBusinessAccount,
+    enabled: isBusinessAccount && isBusinessContext,
   });
 
-  const isBusinessContext = data?.context === "business";
-
-  // Personal user dashboard
-  if (!isBusinessAccount) {
+  // Show personal dashboard for:
+  // 1. Individual account users (always personal)
+  // 2. Business account users who are in personal context mode
+  if (!isBusinessAccount || !isBusinessContext) {
     return <PersonalReportsDashboard />;
   }
 
@@ -657,12 +664,8 @@ export default function Reports() {
               <h1 className="text-3xl font-semibold text-foreground" data-testid="text-page-title">
                 Tax & Reports
               </h1>
-              <Badge variant={isBusinessContext ? "default" : "secondary"} data-testid="badge-context">
-                {isBusinessContext ? (
-                  <><Building2 className="h-3 w-3 mr-1" /> {user?.businessName || user?.businessProfile?.businessName || "Business"}</>
-                ) : (
-                  <><UserCircle className="h-3 w-3 mr-1" /> Personal</>
-                )}
+              <Badge variant="default" data-testid="badge-context">
+                <Building2 className="h-3 w-3 mr-1" /> {user?.businessName || user?.businessProfile?.businessName || "Business"}
               </Badge>
             </div>
             <p className="text-muted-foreground mt-1">

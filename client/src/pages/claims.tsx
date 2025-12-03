@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { 
   QrCode, 
   Key, 
@@ -56,6 +57,7 @@ interface Purchase {
 export default function Claims() {
   const [, navigate] = useLocation();
   const { toast } = useToast();
+  const { user } = useAuth();
   const queryClient = useQueryClient();
   const [selectedClaim, setSelectedClaim] = useState<Claim | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -63,8 +65,11 @@ export default function Claims() {
   const [claimType, setClaimType] = useState<"return" | "warranty" | "exchange">("return");
   const [copied, setCopied] = useState(false);
 
+  // Include user's activeContext in queryKey so claims refetch when context switches
+  const activeContext = user?.activeContext || "personal";
+
   const { data: claimsData, isLoading: claimsLoading } = useQuery({
-    queryKey: ["/api/claims"],
+    queryKey: ["/api/claims", { context: activeContext }],
     queryFn: async () => {
       const response = await apiRequest("GET", "/api/claims");
       return response.json();
@@ -72,7 +77,7 @@ export default function Claims() {
   });
 
   const { data: purchasesData } = useQuery({
-    queryKey: ["/api/purchases"],
+    queryKey: ["/api/purchases", { context: activeContext }],
     queryFn: async () => {
       const response = await apiRequest("GET", "/api/purchases");
       return response.json();

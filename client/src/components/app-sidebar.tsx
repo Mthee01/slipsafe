@@ -88,6 +88,7 @@ export function AppSidebar() {
     onSuccess: (data) => {
       queryClient.setQueryData(["/api/users/me"], data.user);
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/claims"] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports"] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports/personal"] });
       queryClient.invalidateQueries({ queryKey: ["/api/reports/summary"] });

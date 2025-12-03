@@ -3059,7 +3059,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/claims", isAuthenticated, async (req, res) => {
     try {
       const userId = getCurrentUserId(req)!;
-      const claims = await storage.getClaimsByUser(userId);
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Filter claims by user's active context
+      const claims = await storage.getClaimsByUserAndContext(userId, user.activeContext);
       
       res.json({
         claims: claims.map(c => ({
