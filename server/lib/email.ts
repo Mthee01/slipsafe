@@ -1,46 +1,55 @@
-import { Resend } from 'resend';
+import { Resend } from "resend";
 
 let connectionSettings: any;
 
 async function getCredentials() {
   // First, try to use direct API key from environment variable
   if (process.env.RESEND_API_KEY) {
-    const fromEmail = process.env.RESEND_FROM_EMAIL || 'onboarding@resend.dev';
-    console.log(`[Email] Using API key from environment, from email: ${fromEmail}`);
+    const fromEmail =
+      process.env.RESEND_FROM_EMAIL || "SlipSafe <no-reply@slip-safe.net>";
+    console.log(
+      `[Email] Using API key from environment, from email: ${fromEmail}`,
+    );
     return {
       apiKey: process.env.RESEND_API_KEY,
-      fromEmail
+      fromEmail,
     };
   }
 
   // Fallback to Replit connector
   const hostname = process.env.REPLIT_CONNECTORS_HOSTNAME;
-  const xReplitToken = process.env.REPL_IDENTITY 
-    ? 'repl ' + process.env.REPL_IDENTITY 
-    : process.env.WEB_REPL_RENEWAL 
-    ? 'depl ' + process.env.WEB_REPL_RENEWAL 
-    : null;
+  const xReplitToken = process.env.REPL_IDENTITY
+    ? "repl " + process.env.REPL_IDENTITY
+    : process.env.WEB_REPL_RENEWAL
+      ? "depl " + process.env.WEB_REPL_RENEWAL
+      : null;
 
   if (!xReplitToken) {
-    throw new Error('RESEND_API_KEY not set and X_REPLIT_TOKEN not found');
+    throw new Error("RESEND_API_KEY not set and X_REPLIT_TOKEN not found");
   }
 
   connectionSettings = await fetch(
-    'https://' + hostname + '/api/v2/connection?include_secrets=true&connector_names=resend',
+    "https://" +
+      hostname +
+      "/api/v2/connection?include_secrets=true&connector_names=resend",
     {
       headers: {
-        'Accept': 'application/json',
-        'X_REPLIT_TOKEN': xReplitToken
-      }
-    }
-  ).then(res => res.json()).then(data => data.items?.[0]);
+        Accept: "application/json",
+        X_REPLIT_TOKEN: xReplitToken,
+      },
+    },
+  )
+    .then((res) => res.json())
+    .then((data) => data.items?.[0]);
 
-  if (!connectionSettings || (!connectionSettings.settings.api_key)) {
-    throw new Error('Resend not connected. Please set RESEND_API_KEY environment variable.');
+  if (!connectionSettings || !connectionSettings.settings.api_key) {
+    throw new Error(
+      "Resend not connected. Please set RESEND_API_KEY environment variable.",
+    );
   }
   return {
-    apiKey: connectionSettings.settings.api_key, 
-    fromEmail: connectionSettings.settings.from_email || 'onboarding@resend.dev'
+    apiKey: connectionSettings.settings.api_key,
+    fromEmail: connectionSettings.settings.from_email || fromEmail,
   };
 }
 
@@ -48,37 +57,47 @@ async function getResendClient() {
   const { apiKey, fromEmail } = await getCredentials();
   return {
     client: new Resend(apiKey),
-    fromEmail: fromEmail
+    fromEmail: fromEmail,
   };
 }
 
-export async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
+export async function sendEmail(
+  to: string,
+  subject: string,
+  html: string,
+): Promise<boolean> {
   try {
     const { client, fromEmail } = await getResendClient();
-    
+
     console.log(`[Email] Attempting to send email to ${to} from ${fromEmail}`);
     console.log(`[Email] Subject: ${subject}`);
-    
+
     const result = await client.emails.send({
       from: `SlipSafe <${fromEmail}>`,
       to: [to],
       subject,
-      html
+      html,
     });
 
     if (result.error) {
-      console.error('[Email] Failed to send:', JSON.stringify(result.error, null, 2));
-      console.error('[Email] Error details - statusCode:', (result.error as any).statusCode);
-      console.error('[Email] Error details - message:', result.error.message);
-      console.error('[Email] Error details - name:', result.error.name);
+      console.error(
+        "[Email] Failed to send:",
+        JSON.stringify(result.error, null, 2),
+      );
+      console.error(
+        "[Email] Error details - statusCode:",
+        (result.error as any).statusCode,
+      );
+      console.error("[Email] Error details - message:", result.error.message);
+      console.error("[Email] Error details - name:", result.error.name);
       return false;
     }
 
     console.log(`[Email] Sent successfully to ${to}, id: ${result.data?.id}`);
     return true;
   } catch (error: any) {
-    console.error('[Email] Error sending email:', error.message || error);
-    console.error('[Email] Full error:', JSON.stringify(error, null, 2));
+    console.error("[Email] Error sending email:", error.message || error);
+    console.error("[Email] Full error:", JSON.stringify(error, null, 2));
     return false;
   }
 }
@@ -216,7 +235,10 @@ export function generateUsernameRecoveryEmail(username: string): string {
   `.trim();
 }
 
-export function generateEmailVerificationEmail(verifyLink: string, fullName: string): string {
+export function generateEmailVerificationEmail(
+  verifyLink: string,
+  fullName: string,
+): string {
   return `
 <!DOCTYPE html>
 <html>
@@ -294,8 +316,13 @@ interface WarrantyItem {
   daysLeft: number;
 }
 
-export function generateWarrantyAlertEmail(fullName: string, items: WarrantyItem[]): string {
-  const itemsHtml = items.map(item => `
+export function generateWarrantyAlertEmail(
+  fullName: string,
+  items: WarrantyItem[],
+): string {
+  const itemsHtml = items
+    .map(
+      (item) => `
     <tr>
       <td style="padding: 12px; border-bottom: 1px solid #e4e4e7;">
         <strong style="color: #18181b;">${item.merchant}</strong>
@@ -305,13 +332,15 @@ export function generateWarrantyAlertEmail(fullName: string, items: WarrantyItem
         <span style="color: #18181b; font-weight: 600;">$${item.total}</span>
       </td>
       <td style="padding: 12px; border-bottom: 1px solid #e4e4e7; text-align: right;">
-        <span style="color: ${item.daysLeft <= 7 ? '#ef4444' : '#f59e0b'}; font-weight: 600;">
-          ${item.daysLeft} day${item.daysLeft !== 1 ? 's' : ''} left
+        <span style="color: ${item.daysLeft <= 7 ? "#ef4444" : "#f59e0b"}; font-weight: 600;">
+          ${item.daysLeft} day${item.daysLeft !== 1 ? "s" : ""} left
         </span>
         <br><span style="color: #71717a; font-size: 13px;">Expires: ${new Date(item.warrantyEnds).toLocaleDateString()}</span>
       </td>
     </tr>
-  `).join('');
+  `,
+    )
+    .join("");
 
   return `
 <!DOCTYPE html>
@@ -383,7 +412,10 @@ export function generateWarrantyAlertEmail(fullName: string, items: WarrantyItem
   `.trim();
 }
 
-export function generateWelcomeEmail(fullName: string, username: string): string {
+export function generateWelcomeEmail(
+  fullName: string,
+  username: string,
+): string {
   return `
 <!DOCTYPE html>
 <html>

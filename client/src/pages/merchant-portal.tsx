@@ -55,6 +55,7 @@ export default function MerchantPortal() {
   const { toast } = useToast();
   const [, params] = useRoute("/verify/:claimCode");
   const initialClaimCode = params?.claimCode || "";
+  const isPublicVerification = !!initialClaimCode;
   
   const [session, setSession] = useState<MerchantSession | null>(() => {
     try {
@@ -101,6 +102,10 @@ export default function MerchantPortal() {
     setSession(null);
   };
 
+  if (isPublicVerification) {
+    return <PublicClaimVerification claimCode={initialClaimCode} />;
+  }
+
   if (!session) {
     return <MerchantLogin onLogin={saveSession} />;
   }
@@ -111,6 +116,181 @@ export default function MerchantPortal() {
       onLogout={clearSession}
       initialClaimCode={initialClaimCode}
     />
+  );
+}
+
+function PublicClaimVerification({ claimCode }: { claimCode: string }) {
+  const { toast } = useToast();
+  const [pin, setPin] = useState("");
+  const [claimInfo, setClaimInfo] = useState<ClaimInfo | null>(null);
+  const [verificationError, setVerificationError] = useState<string | null>(null);
+  const [isVerified, setIsVerified] = useState(false);
+
+  const verifyMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch("/api/claims/verify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ claimCode, pin }),
+      });
+      if (!response.ok) {
+        const error = await response.json();
+        throw new Error(error.error || "Verification failed");
+      }
+      return response.json();
+    },
+    onSuccess: (data) => {
+      setClaimInfo(data);
+      setIsVerified(true);
+      setVerificationError(null);
+      toast({
+        title: "Claim Verified",
+        description: "This claim is valid and authentic.",
+      });
+    },
+    onError: (error: Error) => {
+      setVerificationError(error.message);
+      setClaimInfo(null);
+      setIsVerified(false);
+      toast({
+        title: "Verification Failed",
+        description: error.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (pin.length !== 6) {
+      toast({
+        title: "Invalid PIN",
+        description: "Please enter the 6-digit PIN from the claim",
+        variant: "destructive",
+      });
+      return;
+    }
+    verifyMutation.mutate();
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-indigo-50 to-teal-50 dark:from-gray-900 dark:to-gray-800 flex items-center justify-center p-4">
+      <Card className="w-full max-w-md">
+        <CardHeader className="text-center">
+          <div className="flex justify-center mb-4">
+            <img src={logo} alt="SlipSafe" className="h-16 w-16" data-testid="img-logo" />
+          </div>
+          <CardTitle className="text-2xl flex items-center justify-center gap-2">
+            <Shield className="h-6 w-6" />
+            Verify Claim
+          </CardTitle>
+          <CardDescription>
+            Enter the PIN to verify this claim
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!isVerified ? (
+            <form onSubmit={handleSubmit} className="space-y-4">
+              <div className="space-y-2">
+                <Label>Claim Code</Label>
+                <div className="p-3 bg-muted rounded-md font-mono text-center text-lg" data-testid="text-claim-code">
+                  {claimCode}
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="pin">6-Digit PIN</Label>
+                <Input
+                  id="pin"
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  maxLength={6}
+                  placeholder="Enter 6-digit PIN"
+                  value={pin}
+                  onChange={(e) => setPin(e.target.value.replace(/\D/g, ""))}
+                  className="text-center text-2xl tracking-widest font-mono"
+                  data-testid="input-verify-pin"
+                />
+              </div>
+              {verificationError && (
+                <div className="flex items-center gap-2 text-destructive text-sm" data-testid="text-verification-error">
+                  <XCircle className="h-4 w-4" />
+                  {verificationError}
+                </div>
+              )}
+              <Button 
+                type="submit" 
+                className="w-full" 
+                disabled={verifyMutation.isPending || pin.length !== 6}
+                data-testid="button-verify-claim"
+              >
+                {verifyMutation.isPending ? (
+                  <>
+                    <Clock className="mr-2 h-4 w-4 animate-spin" />
+                    Verifying...
+                  </>
+                ) : (
+                  <>
+                    <CheckCircle className="mr-2 h-4 w-4" />
+                    Verify Claim
+                  </>
+                )}
+              </Button>
+            </form>
+          ) : claimInfo && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-center gap-2 text-green-600 dark:text-green-400">
+                <CheckCircle className="h-8 w-8" />
+                <span className="text-xl font-semibold">Verified</span>
+              </div>
+              <div className="space-y-3 p-4 bg-muted rounded-lg">
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Type:</span>
+                  <Badge data-testid="badge-claim-type">{claimInfo.claimType}</Badge>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Merchant:</span>
+                  <span className="font-medium" data-testid="text-merchant-name">{claimInfo.merchantName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Amount:</span>
+                  <span className="font-medium" data-testid="text-original-amount">{claimInfo.originalAmount}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Purchase Date:</span>
+                  <span className="font-medium" data-testid="text-purchase-date">{claimInfo.purchaseDate}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Expires:</span>
+                  <span className="font-medium" data-testid="text-expires-at">{claimInfo.expiresAt}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Status:</span>
+                  <Badge 
+                    variant={claimInfo.isExpired ? "destructive" : claimInfo.isUsed ? "secondary" : "default"}
+                    data-testid="badge-claim-status"
+                  >
+                    {claimInfo.isExpired ? "Expired" : claimInfo.isUsed ? "Used" : "Active"}
+                  </Badge>
+                </div>
+              </div>
+              <Button 
+                variant="outline" 
+                className="w-full"
+                onClick={() => {
+                  setIsVerified(false);
+                  setPin("");
+                  setClaimInfo(null);
+                }}
+                data-testid="button-verify-another"
+              >
+                Verify Another Claim
+              </Button>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
   );
 }
 

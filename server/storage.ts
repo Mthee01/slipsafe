@@ -178,6 +178,70 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async updateUserStripeInfo(userId: string, updates: { stripeCustomerId?: string; stripeSubscriptionId?: string }): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set(updates)
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserTermsAcceptance(userId: string, termsVersion: string): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set({ 
+        termsVersionAccepted: termsVersion,
+        termsAcceptedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async updateUserSubscription(userId: string, updates: {
+    stripeSubscriptionId?: string | null;
+    planType?: string;
+    billingInterval?: string | null;
+    subscriptionStatus?: string;
+    subscriptionCurrentPeriodEnd?: Date | null;
+    businessReceiptLimitPerMonth?: number | null;
+    businessUserLimit?: number | null;
+  }): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set(updates)
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
+  async getUserByStripeCustomerId(stripeCustomerId: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.stripeCustomerId, stripeCustomerId));
+    return user;
+  }
+
+  async getUserByStripeSubscriptionId(stripeSubscriptionId: string): Promise<User | undefined> {
+    const [user] = await db.select().from(users).where(eq(users.stripeSubscriptionId, stripeSubscriptionId));
+    return user;
+  }
+
+  async upgradeToBusinessAccount(userId: string, businessInfo: { businessName: string; taxId: string }): Promise<User | undefined> {
+    await this.updateAccountType(userId, "business");
+    
+    const existingProfile = await this.getBusinessProfile(userId);
+    if (!existingProfile) {
+      await this.createBusinessProfile({
+        userId,
+        businessName: businessInfo.businessName,
+        taxId: businessInfo.taxId,
+      });
+    }
+    
+    const [user] = await db.update(users)
+      .set({ activeContext: "business" })
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
   async createPasswordResetToken(userId: string, token: string, expiresAt: Date): Promise<PasswordResetToken> {
     const [resetToken] = await db.insert(passwordResetTokens).values({
       userId,

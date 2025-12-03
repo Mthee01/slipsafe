@@ -33,7 +33,7 @@ Preferred communication style: Simple, everyday language.
   - **Legacy Portal** (`/merchant`): Separate session-based authentication for dedicated merchant staff with their own login credentials.
   - **Integrated Portal** (`/merchant-portal`): For main app users with `merchant_admin` or `merchant_staff` roles, accessible via sidebar without separate login.
   - Both portals support claim verification via QR code scanning or manual entry, refund processing, and verification history. Includes fraud detection and audit trail.
-- **Security**: Session-based authentication with `passport-local`, rate limiting, and 1-hour expiring, single-use password reset tokens.
+- **Security**: Session-based authentication with `passport-local`, rate limiting, and 1-hour expiring, single-use password reset tokens. "Stay logged in" option extends session from 7 to 30 days.
 - **Email Verification**: Registration requires email verification before login, with tokens expiring after 24 hours.
 - **Email System**: Integrates with Resend for professional HTML email delivery for verification, welcome, and account recovery.
 - **Context Switching**: Business accounts can toggle between personal and business modes to manage receipts separately.

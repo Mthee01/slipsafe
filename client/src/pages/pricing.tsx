@@ -1,0 +1,382 @@
+import { useState, useEffect } from "react";
+import { useLocation, Link } from "wouter";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
+import { apiRequest } from "@/lib/queryClient";
+import { Check, Crown, Users, Building2, Sparkles, ArrowRight, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
+
+type PlanId = "solo-monthly" | "solo-annual" | "pro-monthly" | "pro-annual";
+type PlanType = "free" | "business_solo" | "business_pro" | "enterprise" | null;
+
+interface SubscriptionData {
+  planType: PlanType;
+  subscriptionStatus: string | null;
+  billingInterval: "monthly" | "annual" | null;
+}
+
+const TERMS_VERSION = "v1.0";
+
+export default function Pricing() {
+  const [, setLocation] = useLocation();
+  const { toast } = useToast();
+  const { user, isLoading: authLoading } = useAuth();
+  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [selectedPlan, setSelectedPlan] = useState<PlanId | null>(null);
+
+  const searchParams = new URLSearchParams(window.location.search);
+  const success = searchParams.get("success");
+  const canceled = searchParams.get("canceled");
+
+  useEffect(() => {
+    if (success) {
+      toast({
+        title: "Subscription activated!",
+        description: "Welcome to SlipSafe Business. Your subscription is now active.",
+      });
+      window.history.replaceState({}, "", "/pricing");
+    }
+    if (canceled) {
+      toast({
+        title: "Subscription canceled",
+        description: "Your subscription process was canceled. No charges were made.",
+        variant: "destructive",
+      });
+      window.history.replaceState({}, "", "/pricing");
+    }
+  }, [success, canceled, toast]);
+
+  const { data: subscription } = useQuery<SubscriptionData>({
+    queryKey: ["/api/billing/subscription"],
+    enabled: !!user,
+  });
+
+  const checkoutMutation = useMutation({
+    mutationFn: async ({ planId, termsAccepted: accepted }: { planId: PlanId; termsAccepted: boolean }) => {
+      const response = await apiRequest("POST", "/api/billing/create-checkout-session", {
+        planId,
+        termsAccepted: accepted,
+        termsVersion: TERMS_VERSION,
+      });
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to start subscription process",
+        variant: "destructive",
+      });
+    },
+  });
+
+  const handleSubscribe = (planId: PlanId) => {
+    if (!user) {
+      setLocation(`/login?redirect=/pricing&plan=${planId}`);
+      return;
+    }
+    
+    if (!termsAccepted) {
+      toast({
+        title: "Terms Required",
+        description: "Please accept the Business Pricing & Subscription Terms to continue.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setSelectedPlan(planId);
+    checkoutMutation.mutate({ planId, termsAccepted });
+  };
+
+  const isSubscribed = subscription?.planType && subscription.planType !== "free";
+  const currentPlan = subscription?.planType;
+
+  const plans = [
+    {
+      id: "free",
+      name: "SlipSafe Free",
+      description: "For individuals managing personal receipts",
+      price: "R0",
+      period: "forever",
+      features: [
+        "Unlimited personal receipts",
+        "OCR-based receipt scanning",
+        "Return & warranty tracking",
+        "Claim generation with QR codes",
+        "PWA with offline support",
+      ],
+      cta: user ? (currentPlan === "free" ? "Current Plan" : null) : "Sign Up Free",
+      ctaVariant: "outline" as const,
+      icon: ShieldCheck,
+      popular: false,
+    },
+    {
+      id: "solo",
+      name: "Business Solo",
+      description: "For sole traders and freelancers",
+      monthlyPrice: 99,
+      annualPrice: 80,
+      features: [
+        "Everything in Free",
+        "Business profile & dashboard",
+        "Up to 1,000 business receipts/month",
+        "Tax & VAT reporting",
+        "CSV & PDF exports",
+        "Email support",
+      ],
+      icon: Crown,
+      popular: false,
+      userLimit: 1,
+    },
+    {
+      id: "pro",
+      name: "Business Team",
+      description: "For teams of 2-10 people",
+      monthlyPrice: 269,
+      annualPrice: 229,
+      features: [
+        "Everything in Solo",
+        "Up to 5,000 business receipts/month",
+        "Team workspace with shared access",
+        "Owner/manager roles",
+        "Team reports & analytics",
+        "Priority email support",
+      ],
+      icon: Users,
+      popular: true,
+      userLimit: 10,
+    },
+    {
+      id: "enterprise",
+      name: "Enterprise",
+      description: "Custom solutions for larger organisations",
+      price: "Custom",
+      features: [
+        "Everything in Team",
+        "Unlimited receipts",
+        "Unlimited users",
+        "Custom integrations",
+        "Dedicated account manager",
+        "SLA with guaranteed uptime",
+        "On-premise deployment options",
+      ],
+      cta: "Contact Us",
+      ctaVariant: "outline" as const,
+      icon: Building2,
+      popular: false,
+    },
+  ];
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-background to-muted/30">
+      <div className="max-w-7xl mx-auto px-4 py-12">
+        <div className="text-center mb-12">
+          <Badge className="mb-4" variant="secondary">
+            <Sparkles className="h-3 w-3 mr-1" />
+            Simple, transparent pricing
+          </Badge>
+          <h1 className="text-4xl font-bold mb-4" data-testid="text-pricing-title">Choose Your Plan</h1>
+          <p className="text-lg text-muted-foreground max-w-2xl mx-auto">
+            Start free for personal use. Upgrade to Business when you need professional features, 
+            team collaboration, and advanced reporting for your SMME.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          {plans.map((plan) => (
+            <Card 
+              key={plan.id} 
+              className={`relative flex flex-col ${plan.popular ? "border-primary shadow-lg ring-2 ring-primary/20" : ""}`}
+              data-testid={`card-plan-${plan.id}`}
+            >
+              {plan.popular && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2">
+                  <Badge className="bg-primary text-primary-foreground">Most Popular</Badge>
+                </div>
+              )}
+              
+              <CardHeader className="pb-4">
+                <div className="flex items-center gap-2 mb-2">
+                  <div className="p-2 rounded-lg bg-primary/10">
+                    <plan.icon className="h-5 w-5 text-primary" />
+                  </div>
+                  <CardTitle className="text-lg">{plan.name}</CardTitle>
+                </div>
+                <CardDescription>{plan.description}</CardDescription>
+              </CardHeader>
+              
+              <CardContent className="flex-1">
+                <div className="mb-6">
+                  {plan.price ? (
+                    <div className="flex items-baseline gap-1">
+                      <span className="text-3xl font-bold">{plan.price}</span>
+                      {plan.period && <span className="text-muted-foreground">/{plan.period}</span>}
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="flex items-baseline gap-1">
+                        <span className="text-3xl font-bold">R{plan.monthlyPrice}</span>
+                        <span className="text-muted-foreground">/month</span>
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        or R{plan.annualPrice}/month billed annually
+                        <Badge variant="secondary" className="ml-2 text-xs">
+                          Save {Math.round((1 - plan.annualPrice! / plan.monthlyPrice!) * 100)}%
+                        </Badge>
+                      </div>
+                    </div>
+                  )}
+                  {plan.userLimit && (
+                    <p className="text-sm text-muted-foreground mt-2">
+                      {plan.userLimit === 1 ? "1 user" : `Up to ${plan.userLimit} users`}
+                    </p>
+                  )}
+                </div>
+                
+                <ul className="space-y-3">
+                  {plan.features.map((feature, i) => (
+                    <li key={i} className="flex items-start gap-2 text-sm">
+                      <Check className="h-4 w-4 text-primary shrink-0 mt-0.5" />
+                      <span>{feature}</span>
+                    </li>
+                  ))}
+                </ul>
+              </CardContent>
+              
+              <CardFooter className="flex flex-col gap-2 pt-4">
+                {plan.id === "free" && (
+                  plan.cta === "Current Plan" ? (
+                    <Button variant="outline" disabled className="w-full" data-testid="button-current-plan">
+                      Current Plan
+                    </Button>
+                  ) : (
+                    <Link href="/register" className="w-full">
+                      <Button variant="outline" className="w-full" data-testid="button-signup-free">
+                        {plan.cta}
+                        <ArrowRight className="ml-2 h-4 w-4" />
+                      </Button>
+                    </Link>
+                  )
+                )}
+                
+                {plan.id === "solo" && (
+                  <div className="w-full space-y-2">
+                    <Button 
+                      className="w-full"
+                      onClick={() => handleSubscribe("solo-monthly")}
+                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_solo")}
+                      data-testid="button-solo-monthly"
+                    >
+                      {checkoutMutation.isPending && selectedPlan === "solo-monthly" ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      {currentPlan === "business_solo" ? "Current Plan" : "Start Solo - Monthly"}
+                    </Button>
+                    <Button 
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => handleSubscribe("solo-annual")}
+                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_solo")}
+                      data-testid="button-solo-annual"
+                    >
+                      {checkoutMutation.isPending && selectedPlan === "solo-annual" ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      Start Solo - Annual (Save 19%)
+                    </Button>
+                  </div>
+                )}
+                
+                {plan.id === "pro" && (
+                  <div className="w-full space-y-2">
+                    <Button 
+                      className="w-full"
+                      onClick={() => handleSubscribe("pro-monthly")}
+                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_pro")}
+                      data-testid="button-pro-monthly"
+                    >
+                      {checkoutMutation.isPending && selectedPlan === "pro-monthly" ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      {currentPlan === "business_pro" ? "Current Plan" : "Start Pro - Monthly"}
+                    </Button>
+                    <Button 
+                      variant="outline"
+                      className="w-full"
+                      onClick={() => handleSubscribe("pro-annual")}
+                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_pro")}
+                      data-testid="button-pro-annual"
+                    >
+                      {checkoutMutation.isPending && selectedPlan === "pro-annual" ? (
+                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                      ) : null}
+                      Start Pro - Annual (Save 15%)
+                    </Button>
+                  </div>
+                )}
+                
+                {plan.id === "enterprise" && (
+                  <Button 
+                    variant="outline" 
+                    className="w-full"
+                    onClick={() => window.location.href = "mailto:enterprise@slipsafe.com?subject=Enterprise%20Inquiry"}
+                    data-testid="button-enterprise-contact"
+                  >
+                    Contact Us
+                    <ExternalLink className="ml-2 h-4 w-4" />
+                  </Button>
+                )}
+              </CardFooter>
+            </Card>
+          ))}
+        </div>
+
+        <Card className="max-w-2xl mx-auto">
+          <CardContent className="p-6">
+            <div className="flex items-start gap-3">
+              <Checkbox 
+                id="terms"
+                checked={termsAccepted}
+                onCheckedChange={(checked) => setTermsAccepted(checked === true)}
+                data-testid="checkbox-terms"
+              />
+              <div className="grid gap-1.5 leading-none">
+                <label 
+                  htmlFor="terms" 
+                  className="text-sm font-medium leading-relaxed cursor-pointer"
+                >
+                  I have read and accept the{" "}
+                  <Link href="/terms/business" className="text-primary underline hover:no-underline">
+                    SlipSafe Business Pricing & Subscription Terms
+                  </Link>
+                </label>
+                <p className="text-xs text-muted-foreground">
+                  You must accept the terms before subscribing to a paid Business plan.
+                </p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+
+        <div className="text-center mt-12 space-y-4">
+          <h3 className="text-lg font-semibold">Questions about our plans?</h3>
+          <p className="text-muted-foreground">
+            Contact us at{" "}
+            <a href="mailto:Support@slip-safe.net" className="text-primary hover:underline">
+              Support@slip-safe.net
+            </a>
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

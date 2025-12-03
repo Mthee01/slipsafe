@@ -8,10 +8,21 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import { User, LogOut, Upload, Lock, Save, Building2 } from "lucide-react";
+import { User, LogOut, Upload, Lock, Save, Building2, CreditCard, Sparkles, ExternalLink } from "lucide-react";
 import { Separator } from "@/components/ui/separator";
+import { Link } from "wouter";
 import type { UpdateUserProfile, ChangePassword, BusinessProfile, UpdateBusinessProfile } from "@shared/schema";
+
+interface SubscriptionData {
+  planType: "free" | "business_solo" | "business_pro" | "enterprise" | null;
+  subscriptionStatus: string | null;
+  billingInterval: "monthly" | "annual" | null;
+  subscriptionCurrentPeriodEnd: string | null;
+  businessReceiptLimitPerMonth: number | null;
+  businessUserLimit: number | null;
+}
 
 export default function Profile() {
   const { user, logout, isLoggingOut } = useAuth();
@@ -41,6 +52,30 @@ export default function Profile() {
   const { data: businessProfileData, isLoading: isLoadingBusinessProfile } = useQuery<{ profile: BusinessProfile | null }>({
     queryKey: ["/api/users/business-profile"],
     enabled: isBusiness,
+  });
+
+  const { data: subscription } = useQuery<SubscriptionData>({
+    queryKey: ["/api/billing/subscription"],
+    enabled: !!user,
+  });
+
+  const billingPortalMutation = useMutation({
+    mutationFn: async () => {
+      const response = await apiRequest("GET", "/api/billing/portal-session");
+      return response.json();
+    },
+    onSuccess: (data) => {
+      if (data.url) {
+        window.location.href = data.url;
+      }
+    },
+    onError: (error: any) => {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to open billing portal",
+        variant: "destructive",
+      });
+    },
   });
 
   useEffect(() => {
@@ -571,6 +606,86 @@ export default function Profile() {
 
       <Card>
         <CardHeader>
+          <div className="flex items-center gap-3">
+            <div className="flex items-center justify-center h-10 w-10 rounded-full bg-primary/10">
+              <CreditCard className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <CardTitle>Subscription & Billing</CardTitle>
+              <CardDescription>Manage your plan and payment method</CardDescription>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 p-4 bg-muted/50 rounded-lg">
+            <div className="space-y-1">
+              <div className="flex items-center gap-2">
+                <span className="font-medium text-lg" data-testid="text-current-plan">
+                  {subscription?.planType === "free" && "SlipSafe Free"}
+                  {subscription?.planType === "business_solo" && "Business Solo"}
+                  {subscription?.planType === "business_pro" && "Business Team"}
+                  {subscription?.planType === "enterprise" && "Enterprise"}
+                  {!subscription?.planType && "SlipSafe Free"}
+                </span>
+                {subscription?.subscriptionStatus === "active" && (
+                  <Badge variant="default" className="bg-green-600">Active</Badge>
+                )}
+                {subscription?.subscriptionStatus === "past_due" && (
+                  <Badge variant="destructive">Past Due</Badge>
+                )}
+                {subscription?.subscriptionStatus === "canceled" && (
+                  <Badge variant="secondary">Canceled</Badge>
+                )}
+                {subscription?.subscriptionStatus === "trialing" && (
+                  <Badge variant="secondary">Trial</Badge>
+                )}
+              </div>
+              {subscription?.planType && subscription.planType !== "free" && (
+                <div className="text-sm text-muted-foreground">
+                  {subscription.billingInterval === "monthly" ? "Monthly" : "Annual"} billing
+                  {subscription.subscriptionCurrentPeriodEnd && (
+                    <> - Renews {new Date(subscription.subscriptionCurrentPeriodEnd).toLocaleDateString()}</>
+                  )}
+                </div>
+              )}
+              {subscription?.businessReceiptLimitPerMonth && subscription.businessReceiptLimitPerMonth > 0 && (
+                <div className="text-sm text-muted-foreground">
+                  {subscription.businessReceiptLimitPerMonth.toLocaleString()} business receipts/month
+                </div>
+              )}
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              {subscription?.planType && subscription.planType !== "free" ? (
+                <Button
+                  variant="outline"
+                  onClick={() => billingPortalMutation.mutate()}
+                  disabled={billingPortalMutation.isPending}
+                  data-testid="button-manage-billing"
+                >
+                  <ExternalLink className="mr-2 h-4 w-4" />
+                  {billingPortalMutation.isPending ? "Opening..." : "Manage Billing"}
+                </Button>
+              ) : (
+                <Link href="/pricing">
+                  <Button data-testid="button-upgrade">
+                    <Sparkles className="mr-2 h-4 w-4" />
+                    Upgrade to Business
+                  </Button>
+                </Link>
+              )}
+            </div>
+          </div>
+          {subscription?.planType === "free" && (
+            <p className="text-sm text-muted-foreground">
+              Upgrade to a Business plan to unlock team workspaces, advanced reporting, 
+              tax/VAT summaries, and more.
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Account Actions</CardTitle>
           <CardDescription>Manage your session</CardDescription>
         </CardHeader>
@@ -579,7 +694,7 @@ export default function Profile() {
             variant="destructive"
             onClick={() => logout()}
             disabled={isLoggingOut}
-            data-testid="button-logout"
+            data-testid="button-logout-profile"
           >
             <LogOut className="mr-2 h-4 w-4" />
             {isLoggingOut ? "Logging out..." : "Log Out"}

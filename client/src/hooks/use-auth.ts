@@ -15,6 +15,8 @@ interface User {
   activeContext?: string;
   role?: string;
   businessName?: string | null;
+  planType?: "free" | "business_solo" | "business_pro" | "enterprise" | null;
+  subscriptionStatus?: "active" | "past_due" | "canceled" | "trialing" | null;
   businessProfile?: {
     businessName: string;
     taxId?: string | null;
@@ -53,9 +55,9 @@ export function useAuth() {
     staleTime: Infinity
   });
 
-  const loginMutation = useMutation<AuthResponse, Error, { username: string; password: string }>({
-    mutationFn: async ({ username, password }) => {
-      const response = await apiRequest("POST", "/api/auth/login", { username, password });
+  const loginMutation = useMutation<AuthResponse, Error, { username: string; password: string; rememberMe?: boolean }>({
+    mutationFn: async ({ username, password, rememberMe = false }) => {
+      const response = await apiRequest("POST", "/api/auth/login", { username, password, rememberMe });
       return response.json();
     },
     onSuccess: (data) => {
@@ -100,7 +102,7 @@ export function useAuth() {
     onSuccess: () => {
       queryClient.setQueryData(["/api/users/me"], null);
       queryClient.clear();
-      setLocation("/login");
+      setLocation("/landing");
     }
   });
 

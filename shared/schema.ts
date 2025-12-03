@@ -9,6 +9,12 @@ export type AccountType = typeof ACCOUNT_TYPES[number];
 export const USER_ROLES = ["user", "admin", "support", "merchant_admin", "merchant_staff"] as const;
 export type UserRole = typeof USER_ROLES[number];
 
+export const PLAN_TYPES = ["free", "business_solo", "business_pro", "enterprise"] as const;
+export type PlanType = typeof PLAN_TYPES[number];
+
+export const BILLING_INTERVALS = ["monthly", "annual"] as const;
+export type BillingInterval = typeof BILLING_INTERVALS[number];
+
 export const users = pgTable("users", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   username: text("username").notNull().unique(),
@@ -24,6 +30,16 @@ export const users = pgTable("users", {
   activeContext: text("active_context").notNull().default("personal"),
   role: text("role").notNull().default("user"),
   merchantId: varchar("merchant_id"),
+  stripeCustomerId: text("stripe_customer_id"),
+  stripeSubscriptionId: text("stripe_subscription_id"),
+  planType: text("plan_type").notNull().default("free"),
+  billingInterval: text("billing_interval"),
+  subscriptionStatus: text("subscription_status"),
+  businessReceiptLimitPerMonth: integer("business_receipt_limit_per_month"),
+  businessUserLimit: integer("business_user_limit"),
+  subscriptionCurrentPeriodEnd: timestamp("subscription_current_period_end"),
+  termsVersionAccepted: text("terms_version_accepted"),
+  termsAcceptedAt: timestamp("terms_accepted_at"),
 });
 
 export const insertUserSchema = createInsertSchema(users).pick({
@@ -621,3 +637,63 @@ export const insertFraudEventSchema = createInsertSchema(fraudEvents).omit({
 
 export type InsertFraudEvent = z.infer<typeof insertFraudEventSchema>;
 export type FraudEvent = typeof fraudEvents.$inferSelect;
+
+// Billing schemas
+export const PLAN_IDS = ["solo-monthly", "solo-annual", "pro-monthly", "pro-annual"] as const;
+export type PlanId = typeof PLAN_IDS[number];
+
+export const createCheckoutSessionSchema = z.object({
+  planId: z.enum(PLAN_IDS),
+  termsAccepted: z.boolean(),
+  termsVersion: z.string(),
+});
+
+export type CreateCheckoutSession = z.infer<typeof createCheckoutSessionSchema>;
+
+export function getPlanDetails(planId: PlanId): { 
+  planType: PlanType; 
+  billingInterval: BillingInterval;
+  receiptLimit: number;
+  userLimit: number;
+  priceMonthly: number;
+  priceDisplay: string;
+} {
+  switch (planId) {
+    case "solo-monthly":
+      return { 
+        planType: "business_solo", 
+        billingInterval: "monthly",
+        receiptLimit: 1000,
+        userLimit: 1,
+        priceMonthly: 99,
+        priceDisplay: "R99/month"
+      };
+    case "solo-annual":
+      return { 
+        planType: "business_solo", 
+        billingInterval: "annual",
+        receiptLimit: 1000,
+        userLimit: 1,
+        priceMonthly: 80,
+        priceDisplay: "R80/month (billed annually)"
+      };
+    case "pro-monthly":
+      return { 
+        planType: "business_pro", 
+        billingInterval: "monthly",
+        receiptLimit: 5000,
+        userLimit: 10,
+        priceMonthly: 269,
+        priceDisplay: "R269/month"
+      };
+    case "pro-annual":
+      return { 
+        planType: "business_pro", 
+        billingInterval: "annual",
+        receiptLimit: 5000,
+        userLimit: 10,
+        priceMonthly: 229,
+        priceDisplay: "R229/month (billed annually)"
+      };
+  }
+}

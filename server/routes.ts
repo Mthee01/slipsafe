@@ -16,6 +16,7 @@ import { generateReceiptPDF, generateExpenseReportPDF } from "./lib/pdf";
 import { readFile } from "fs/promises";
 import path from "path";
 import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail } from "./lib/email";
+import { registerBillingRoutes } from "./billing";
 
 async function logUserActivity(
   userId: string, 
@@ -398,6 +399,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   app.post("/api/auth/login", (req, res, next) => {
+    const { rememberMe } = req.body;
+    
     passport.authenticate("local", (err: any, user: any, info: any) => {
       if (err) {
         return res.status(500).json({ error: "Login failed. Please try again." });
@@ -414,7 +417,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ error: "Login failed. Please try again." });
         }
         
-        await logUserActivity(user.id, "login", undefined, req);
+        // Extend session cookie if "Stay logged in" was checked
+        if (rememberMe && req.session) {
+          // 30 days in milliseconds
+          const thirtyDays = 1000 * 60 * 60 * 24 * 30;
+          req.session.cookie.maxAge = thirtyDays;
+        }
+        
+        await logUserActivity(user.id, "login", { rememberMe: !!rememberMe }, req);
         
         // Return full user data (excluding password)
         const { password, ...userWithoutPassword } = user;
@@ -1603,6 +1613,48 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Verification error:", error);
       res.status(401).json({ error: "Invalid or expired token" });
+    }
+  });
+
+  app.post("/api/claims/verify", async (req, res) => {
+    try {
+      const { claimCode, pin } = req.body;
+
+      if (!claimCode || !pin) {
+        return res.status(400).json({ error: "Claim code and PIN are required" });
+      }
+
+      if (pin.length !== 6) {
+        return res.status(400).json({ error: "PIN must be 6 digits" });
+      }
+
+      const claim = await storage.getClaimByCode(claimCode);
+
+      if (!claim) {
+        return res.status(404).json({ error: "Claim not found. Please check the claim code." });
+      }
+
+      if (claim.pin !== pin) {
+        return res.status(401).json({ error: "Invalid PIN. Please check and try again." });
+      }
+
+      const isExpired = new Date(claim.expiresAt) < new Date();
+      const isUsed = claim.state === "redeemed";
+
+      res.json({
+        claimCode: claim.claimCode,
+        claimType: claim.claimType,
+        state: claim.state,
+        merchantName: claim.merchantName,
+        originalAmount: `R${parseFloat(claim.originalAmount).toFixed(2)}`,
+        purchaseDate: claim.purchaseDate,
+        expiresAt: new Date(claim.expiresAt).toLocaleDateString("en-ZA"),
+        isExpired,
+        isUsed,
+      });
+    } catch (error: any) {
+      console.error("Claim verification error:", error);
+      res.status(500).json({ error: "Verification failed. Please try again." });
     }
   });
 
@@ -3485,6 +3537,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to fetch verifications" });
     }
   });
+
+  registerBillingRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

@@ -5,10 +5,47 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import passport, { hashPassword } from "./auth";
 import { storage } from "./storage";
+import { runMigrations } from 'stripe-replit-sync';
+import { getStripeSync } from "./lib/stripeClient";
+import { WebhookHandlers } from "./lib/webhookHandlers";
 
 if (!existsSync("uploads")) {
   mkdirSync("uploads", { recursive: true });
   log("Created uploads/ directory");
+}
+
+async function initStripe() {
+  const databaseUrl = process.env.DATABASE_URL;
+  if (!databaseUrl) {
+    log("DATABASE_URL not found - Stripe initialization skipped");
+    return;
+  }
+
+  try {
+    log("Initializing Stripe schema...");
+    await runMigrations({ databaseUrl });
+    log("Stripe schema ready");
+
+    const stripeSync = await getStripeSync();
+
+    log("Setting up managed webhook...");
+    const webhookBaseUrl = `https://${process.env.REPLIT_DOMAINS?.split(',')[0]}`;
+    const { webhook, uuid } = await stripeSync.findOrCreateManagedWebhook(
+      `${webhookBaseUrl}/api/stripe/webhook`,
+      {
+        enabled_events: ['*'],
+        description: 'SlipSafe managed webhook for Stripe sync',
+      }
+    );
+    log(`Webhook configured: ${webhook.url}`);
+
+    log("Starting Stripe data sync in background...");
+    stripeSync.syncBackfill()
+      .then(() => log("Stripe data synced"))
+      .catch((err: any) => console.error("Error syncing Stripe data:", err));
+  } catch (error) {
+    console.error("Failed to initialize Stripe:", error);
+  }
 }
 
 async function seedAdminUser() {
@@ -78,6 +115,35 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+app.post(
+  '/api/stripe/webhook/:uuid',
+  express.raw({ type: 'application/json' }),
+  async (req, res) => {
+    const signature = req.headers['stripe-signature'];
+
+    if (!signature) {
+      return res.status(400).json({ error: 'Missing stripe-signature' });
+    }
+
+    try {
+      const sig = Array.isArray(signature) ? signature[0] : signature;
+
+      if (!Buffer.isBuffer(req.body)) {
+        console.error('STRIPE WEBHOOK ERROR: req.body is not a Buffer');
+        return res.status(500).json({ error: 'Webhook processing error' });
+      }
+
+      const { uuid } = req.params;
+      await WebhookHandlers.processWebhook(req.body as Buffer, sig, uuid);
+
+      res.status(200).json({ received: true });
+    } catch (error: any) {
+      console.error('Webhook error:', error.message);
+      res.status(400).json({ error: 'Webhook processing error' });
+    }
+  }
+);
+
 app.use(express.json({
   verify: (req, _res, buf) => {
     req.rawBody = buf;
@@ -116,6 +182,7 @@ app.use((req, res, next) => {
 });
 
 (async () => {
+  await initStripe();
   await seedAdminUser();
   const server = await registerRoutes(app);
 

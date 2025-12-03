@@ -1,4 +1,4 @@
-import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store } from "lucide-react";
+import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -168,6 +168,21 @@ export function AppSidebar() {
 
       <SidebarContent>
         <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              <SidebarMenuItem>
+                <SidebarMenuButton asChild tooltip="Home">
+                  <Link href="/landing" data-testid="nav-home" onClick={handleMenuItemClick}>
+                    <Globe className="h-4 w-4" />
+                    <span>Home</span>
+                  </Link>
+                </SidebarMenuButton>
+              </SidebarMenuItem>
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
           <SidebarGroupLabel>Navigation</SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu>
@@ -213,6 +228,24 @@ export function AppSidebar() {
                     <Link href="/merchant-portal" data-testid="nav-merchant" onClick={handleMenuItemClick}>
                       <Store className="h-4 w-4" />
                       <span>Merchant Portal</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {!isBusiness && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Upgrade</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/pricing"}>
+                    <Link href="/pricing" data-testid="nav-pricing" onClick={handleMenuItemClick}>
+                      <Sparkles className="h-4 w-4" />
+                      <span>Business Plans</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

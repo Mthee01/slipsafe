@@ -10,6 +10,7 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { AlertsWidget } from "@/components/alerts-widget";
 import { OfflineIndicator } from "@/components/offline-indicator";
 import { InstallPrompt } from "@/components/install-prompt";
+import { CrispChat } from "@/components/crisp-chat";
 import { useAuth } from "@/hooks/use-auth";
 import { useWarrantyNotifications } from "@/hooks/use-warranty-notifications";
 import { Button } from "@/components/ui/button";
@@ -34,6 +35,11 @@ import MerchantPortal from "@/pages/merchant-portal";
 import IntegratedMerchantPortal from "@/pages/integrated-merchant-portal";
 import ReceiptDetail from "@/pages/receipt-detail";
 import UpgradeToBusiness from "@/pages/upgrade-to-business";
+import Pricing from "@/pages/pricing";
+import BusinessTerms from "@/pages/business-terms";
+import LandingPage from "@/pages/landing";
+import Terms from "@/pages/terms";
+import Privacy from "@/pages/privacy";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
 function AppHeader() {
@@ -47,7 +53,7 @@ function AppHeader() {
     },
     onSuccess: () => {
       queryClient.clear();
-      setLocation("/login");
+      setLocation("/landing");
       toast({
         title: "Logged out",
         description: "You have been logged out successfully",
@@ -108,6 +114,8 @@ function AppContent() {
   if (!isAuthenticated) {
     return (
       <Switch>
+        <Route path="/" component={LandingPage} />
+        <Route path="/landing" component={LandingPage} />
         <Route path="/login" component={Login} />
         <Route path="/register" component={Register} />
         <Route path="/registration-success" component={RegistrationSuccess} />
@@ -117,45 +125,58 @@ function AppContent() {
         <Route path="/reset-password" component={ResetPassword} />
         <Route path="/merchant" component={MerchantPortal} />
         <Route path="/verify/:claimCode" component={MerchantPortal} />
+        <Route path="/pricing" component={Pricing} />
+        <Route path="/terms/business" component={BusinessTerms} />
+        <Route path="/terms" component={Terms} />
+        <Route path="/privacy" component={Privacy} />
         <Route>
-          <Redirect to="/login" />
+          <Redirect to="/" />
         </Route>
       </Switch>
     );
   }
 
   return (
-    <SidebarProvider>
-      <div className="flex h-screen w-full">
-        <AppSidebar />
-        <div className="flex flex-col flex-1 overflow-hidden">
-          <AppHeader />
-          <main className="flex-1 overflow-auto">
-            <Switch>
-              <Route path="/" component={Home} />
-              <Route path="/receipts" component={Receipts} />
-              <Route path="/receipt/:id" component={ReceiptDetail} />
-              <Route path="/claims" component={Claims} />
-              <Route path="/reports" component={Reports} />
-              <Route path="/settings" component={Settings} />
-              <Route path="/profile" component={Profile} />
-              <Route path="/upgrade-to-business" component={UpgradeToBusiness} />
-              <Route path="/admin" component={AdminDashboard} />
-              <Route path="/merchant" component={MerchantPortal} />
-              <Route path="/merchant-portal" component={IntegratedMerchantPortal} />
-              <Route path="/verify/:claimCode" component={MerchantPortal} />
-              <Route path="/login">
-                <Redirect to="/" />
-              </Route>
-              <Route path="/register">
-                <Redirect to="/" />
-              </Route>
-              <Route component={NotFound} />
-            </Switch>
-          </main>
-        </div>
-      </div>
-    </SidebarProvider>
+    <Switch>
+      <Route path="/landing" component={LandingPage} />
+      <Route>
+        <SidebarProvider>
+          <div className="flex h-screen w-full">
+            <AppSidebar />
+            <div className="flex flex-col flex-1 overflow-hidden">
+              <AppHeader />
+              <main className="flex-1 overflow-auto">
+                <Switch>
+                  <Route path="/" component={Home} />
+                  <Route path="/receipts" component={Receipts} />
+                  <Route path="/receipt/:id" component={ReceiptDetail} />
+                  <Route path="/claims" component={Claims} />
+                  <Route path="/reports" component={Reports} />
+                  <Route path="/settings" component={Settings} />
+                  <Route path="/profile" component={Profile} />
+                  <Route path="/upgrade-to-business" component={UpgradeToBusiness} />
+                  <Route path="/admin" component={AdminDashboard} />
+                  <Route path="/merchant" component={MerchantPortal} />
+                  <Route path="/merchant-portal" component={IntegratedMerchantPortal} />
+                  <Route path="/verify/:claimCode" component={MerchantPortal} />
+                  <Route path="/pricing" component={Pricing} />
+                  <Route path="/terms/business" component={BusinessTerms} />
+                  <Route path="/terms" component={Terms} />
+                  <Route path="/privacy" component={Privacy} />
+                  <Route path="/login">
+                    <Redirect to="/" />
+                  </Route>
+                  <Route path="/register">
+                    <Redirect to="/" />
+                  </Route>
+                  <Route component={NotFound} />
+                </Switch>
+              </main>
+            </div>
+          </div>
+        </SidebarProvider>
+      </Route>
+    </Switch>
   );
 }
 
@@ -178,6 +199,7 @@ function App() {
           <Toaster />
           <OfflineIndicator />
           <InstallPrompt />
+          <CrispChat />
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
