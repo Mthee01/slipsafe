@@ -1,0 +1,341 @@
+You are an expert full-stack engineer working on an existing Replit project called SlipSafe.
+
+## 1. Context
+
+- The app is already working with:
+  - Login screen (Welcome to SlipSafe, Username/Password, etc.)
+  - Backend auth and receipt/claims functionality.
+  - An EXISTING **Pricing section/page** for SlipSafe plans (do NOT rebuild it, just integrate with it).
+- Tech stack: React + TypeScript (likely with Vite), Node/Express backend, and existing PWA support (or at least a basic manifest/service worker that we can extend).
+
+## 2. Goal
+
+Add a **public marketing / landing page** that:
+
+- Sits at the root (`/`).
+- Gives an overview of SlipSafe.
+- Explains offerings for:
+  - Individuals (free personal use),
+  - SMMEs (Business 1 / Business Team),
+  - Merchants & Retailers (pilot/POC).
+- Integrates cleanly with the **existing Pricing section/page** (no duplication).
+- Shows clear help/contact options.
+- Includes a live chat widget.
+- Includes a **hard-coded dummy user count** for social proof.
+- Ensures that when the app is installed or added to the home screen, the **SlipSafe logo** is used as the app icon.
+
+The existing login/signup flows and the existing pricing section must remain working and be linked from the landing page.
+
+Before changing anything, scan the repo and **identify**:
+
+- Current routes/components for:
+  - Sign in / login
+  - Register / create account
+- The existing **Pricing page or component**:
+  - Its route (e.g. `/pricing`) OR
+  - Its section id (e.g. a `#pricing` section on the same page)
+
+Use those actual paths/ids instead of inventing new ones.
+
+---
+
+## 3. Routing Requirements
+
+1. Make the **new landing page** the default for visitors to `/`.
+2. Keep the existing authenticated app as-is under its current routes.
+3. If the login page is currently at `/`, refactor so:
+   - `/` → new Landing/Home page
+   - `/login` (or existing login route) → login screen
+   - `/register` or `/create-account` → registration screen (if present).
+4. The existing **Pricing section** should stay where it is:
+   - If it’s a separate page (e.g. `/pricing`), landing page buttons should navigate there.
+   - If it’s a section on the same page with an id (e.g. `id="pricing"`), landing page links should scroll to that anchor.
+
+Do not duplicate or rebuild the pricing cards; only integrate.
+
+---
+
+## 4. Navigation Bar
+
+Add a top navigation bar on the landing page:
+
+- Left: SlipSafe logo (use the existing SlipSafe logo asset).
+- Center/Right nav links:
+  - Home → scroll to top
+  - How it works → `#how-it-works`
+  - For Individuals → `#for-individuals`
+  - For Businesses → `#for-businesses`
+  - For Retailers → `#for-retailers`
+  - Pricing → **link to the existing pricing section/page**:
+    - If pricing is on a dedicated route (e.g. `/pricing`), use that.
+    - If pricing is on the same page with `id="pricing"`, use `#pricing`.
+  - Help → `#help`
+- Right-side buttons:
+  - **Sign In** → link to the existing login route (e.g. `/login`).
+  - **Get Started Free** → link to the existing registration / create-account route.
+
+Use the existing colour scheme that matches the SlipSafe login screen and keep the nav sticky on scroll.
+
+---
+
+## 5. Hero Section + Dummy User Count
+
+At the top of the landing page:
+
+**Headline:**
+> Never lose a slip again.
+
+**Sub-heading:**
+> SlipSafe turns paper and email receipts into smart, searchable records – with returns, warranties and VAT-ready reports all in one secure app.
+
+**Buttons:**
+
+- **Get Started Free** → registration route.
+- **View Business Plans** → integrate with the existing pricing section:
+  - If pricing is a separate page: navigate to `/pricing`.
+  - If pricing is on the same page: scroll to `#pricing`.
+
+Below the buttons, add:
+
+1. **Trust strip** with short tags:
+   - “Secure storage”
+   - “Smart return & warranty deadlines”
+   - “Accountant-ready exports for SMMEs”
+
+2. **Dummy social proof** (hard-coded constant), e.g.:
+   - “Join over **1 250** shoppers and businesses already protecting their slips with SlipSafe.”
+   Implement as a front-end constant, e.g. `const DUMMY_USER_COUNT = 1250;` so it can be swapped later.
+
+Right side of hero: show a visual using existing UI:
+- A mockup of the login or dashboard view in a device frame (desktop or mobile style).
+
+---
+
+## 6. Main Audiences Section
+
+Add a section beneath hero (id `audiences` or just placed logically).
+
+Title:
+> Built for real-life receipts – not just perfect systems.
+
+Three audience cards with these exact lines:
+
+1. **Everyday Shoppers**  
+   “For shoppers who are tired of lost, faded receipts and missing warranties – SlipSafe keeps every slip and guarantee safe, searchable and ready when you need it.”
+
+2. **SMMEs**  
+   “For SMMEs who need VAT and spending under control – SlipSafe turns everyday slips into clean, accountant-ready reports.”
+
+3. **Merchants & Retailers**  
+   “For retailers drowning in paper slips, disputes and fraud – SlipSafe turns receipts into verifiable digital records, speeding up returns and unlocking real post-purchase insight.”
+
+Add 1–2 small supporting bullets or icons per card.
+
+---
+
+## 7. “How SlipSafe Works” Section
+
+Section id: `how-it-works`.
+
+Title:
+> Three simple steps
+
+Three steps with icons:
+
+1. **Capture your receipt**  
+   “Scan with your phone camera, upload a photo or paste an email receipt.”
+
+2. **SlipSafe reads and organises it**  
+   “Our OCR extracts totals, dates, VAT and return/warranty terms, then files everything by merchant, category and date.”
+
+3. **Use it when it counts**  
+   “Show digital proof at the till, track ‘Return by’ and ‘Warranty ends’ dates, export reports or generate verifiable claims.”
+
+---
+
+## 8. For Individuals Section
+
+Section id: `for-individuals`.
+
+Title:
+> For Individuals: No more shoeboxes, no more faded slips.
+
+Bullets:
+
+- Keep **all your personal receipts** in one secure place.  
+- Get **smart reminders** before returns and warranties expire.  
+- Store **proof of purchase** for big-ticket items without worrying about paper.  
+- Free to use – forever.
+
+Button:
+- **Get Started Free** → registration route.
+
+---
+
+## 9. For SMMEs Section
+
+Section id: `for-businesses`.
+
+Title:
+> For SMMEs: VAT, spend and evidence in one place.
+
+Bullets:
+
+- Separate **Business** and **Personal** profiles with their own dashboards.  
+- Capture business expenses from anywhere – owner or staff can upload slips.  
+- Get **VAT and expenditure summaries** by month, merchant and category.  
+- Export **accountant-ready CSV/PDF reports** for tax and year-end.  
+- Track return and warranty deadlines on equipment, tools and stock.
+
+Button:
+- **See Business Plans** → reuse the existing pricing section/page:
+  - If pricing is at `/pricing`: navigate there.
+  - If pricing is on the same page: scroll to `#pricing`.
+
+---
+
+## 10. For Merchants & Retailers Section
+
+Section id: `for-retailers`.
+
+Title:
+> For Retailers: Faster returns, less fraud, clearer insight.
+
+Intro:
+> SlipSafe gives retailers a digital layer over traditional receipts, making returns, warranties and claims faster and more reliable – without forcing a full POS replacement on day one.
+
+Bullets:
+
+- **Reduce friction at the returns desk** – staff rely on clear, digital proof instead of deciphering faded paper slips.  
+- **Cut down on fraud and “friendly fraud”** – verifiable digital receipts and claims make re-used or manipulated slips much harder.  
+- **Apply policies consistently** – standardise how return and warranty rules are applied across categories, promotions and branches.  
+- **See the post-purchase journey** – gain visibility into returns and claims by customer, category and SKU instead of losing insight once the slip leaves the store.
+
+Button:
+- **Talk to us about a pilot** → scroll to `#help` or open mailto (see Help section).
+
+---
+
+## 11. Pricing Integration
+
+**IMPORTANT: DO NOT REBUILD THE PRICING UI.**
+
+- Detect where the existing Pricing section lives:
+  - If it is a dedicated route (e.g. `/pricing` with a React page), then:
+    - All “Pricing” nav links and “View Business Plans” / “See Business Plans” buttons should route to `/pricing`.
+  - If the pricing UI is part of the same SPA view with an element like `<section id="pricing">`:
+    - Use hash/anchor linking to scroll to `#pricing` from:
+      - The nav “Pricing” link,
+      - “View Business Plans” button in Hero,
+      - “See Business Plans” button in SMME section.
+
+The goal: from the landing page, users should smoothly reach the **already-built pricing section** via these links/buttons.
+
+---
+
+## 12. Help & Contact Section
+
+Section id: `help`.
+
+Title:
+> Need help? We’re close by.
+
+Create four contact blocks with working links:
+
+1. **WhatsApp Support**
+   - Text: “Chat with SlipSafe on WhatsApp”
+   - Phone: 083 678 4884
+   - Link (open in new tab):
+     `https://wa.me/27836784884?text=Hi%20SlipSafe%2C%20I%27d%20like%20to%20know%20more%20about%20your%20app.`
+
+2. **Email**
+   - Label: “Email us”
+   - Address: `sales@slip-safe.net`
+   - Link: `mailto:sales@slip-safe.net`
+
+3. **Phone**
+   - Label: “Call us”
+   - Number: 083 678 4884
+   - Link: `tel:+27836784884`
+   - Note: “Business hours: Mon–Fri, 09:00–17:00 (SAST)”
+
+4. **Live Chat**
+   - Text: “Use the live chat bubble at the bottom of the screen to message us instantly from the website.”
+
+---
+
+## 13. Live Chat Widget
+
+Add a third-party live chat widget (Crisp or Tawk.to recommended).
+
+Example with Crisp:
+
+- Add the Crisp JavaScript snippet to the main HTML or top-level React layout so it appears on:
+  - Landing page
+  - Login page
+  - Pricing page
+- Use a placeholder `CRISP_WEBSITE_ID` (I’ll configure the real one later).
+- Ensure a floating chat bubble appears bottom-right and basic messaging works.
+
+---
+
+## 14. Footer
+
+Add a footer visible on the landing page:
+
+- Links:
+  - Home → `/`
+  - Pricing → existing pricing route or `#pricing`
+  - Help → `#help`
+  - Terms & Conditions → simple `/terms` page placeholder (if not already present)
+  - Privacy Policy → simple `/privacy` page placeholder (if not already present)
+- Contact line:
+  - `Contact: sales@slip-safe.net · 083 678 4884`
+- Copyright:
+  - `© SlipSafe. All rights reserved. Made in South Africa.`
+
+---
+
+## 15. PWA Icon & SlipSafe Logo (Add-to-Home-Screen & Install)
+
+Ensure that when the app is installed or added to the home screen, it uses the **SlipSafe logo**:
+
+1. Locate existing SlipSafe logo, or create square PNG versions (192x192, 256x256, 384x384, 512x512).
+2. Place them under a public path, e.g. `/public/icons/`.
+3. Create/update `manifest.webmanifest` (or `manifest.json`) with:
+   - `"name": "SlipSafe"`
+   - `"short_name": "SlipSafe"`
+   - `"start_url": "/"`
+   - `"display": "standalone"`
+   - `"background_color": "#ffffff"`
+   - `"theme_color"`: SlipSafe primary blue
+   - `"icons"`: array of the SlipSafe logo sizes
+4. In `index.html`:
+   - Link manifest:
+     `<link rel="manifest" href="/manifest.webmanifest" />`
+   - Set favicon:
+     `<link rel="icon" type="image/png" href="/icons/slipsafe-192.png" />`
+   - Apple touch icon:
+     `<link rel="apple-touch-icon" href="/icons/slipsafe-192.png" />`
+   - Theme color meta tag:
+     `<meta name="theme-color" content="#[SlipSafe blue]" />`
+5. Confirm via browser dev tools that the manifest is valid and that install/add-to-home-screen uses the SlipSafe logo.
+
+---
+
+## 16. Implementation Notes
+
+- Use existing styles/colours so the landing page feels consistent with the app.
+- Make everything responsive and mobile-friendly.
+- Implement the dummy user count as a constant in the hero.
+- Do NOT remove or break the existing pricing UI; only link into it.
+- After changes:
+  - Verify:
+    - Nav links scroll or route correctly.
+    - Sign In and Get Started Free go to the correct auth routes.
+    - Pricing-related buttons hit the existing pricing section/page.
+    - WhatsApp, mailto, and tel links work.
+    - PWA install uses the SlipSafe logo.
+  - Ensure the app builds and runs without TypeScript or bundling errors.
+
+Now implement this new landing/home page, integrate it with the existing pricing section, and configure contact, chat, and PWA icons in the current SlipSafe project.

@@ -1,0 +1,383 @@
+You are an expert full-stack engineer working on an existing Replit project called SlipSafe.
+
+## 1. Context
+
+- The app is already working with:
+  - Login screen (Welcome to SlipSafe, Username/Password, etc.)
+  - Backend auth and receipt/claims functionality.
+- Tech stack: React + TypeScript (likely with Vite), Node/Express backend, and existing PWA support (or at least a basic manifest/service worker that we can extend).
+- Goal: ADD a **public marketing / landing page** that:
+  - Sits at the root (`/`).
+  - Gives an overview of SlipSafe.
+  - Explains products for Individuals, SMMEs, and Retailers.
+  - Shows simple pricing.
+  - Provides clear help/contact options.
+  - Includes a live chat widget.
+  - Includes a **hard-coded dummy user count / usage stat** to create social proof.
+- Additionally: ensure that **when the app is installed or added to the home screen**, it displays the **SlipSafe logo as the icon** (PWA icon + favicon + iOS home screen icon).
+- The existing login/signup experience must remain working and be linked from the landing page.
+
+Before changing anything, scan the repo and **identify the current routes and components for:**
+- Sign in / login
+- Create account / register
+Then use those actual paths when wiring links and buttons (do NOT invent new routes if the app already has them).
+
+---
+
+## 2. Routing Requirements
+
+1. Make the **new landing page** the default for visitors to `/`.
+2. Keep the existing authenticated app as-is under its current route(s). If the login page is currently served from `/`, refactor so:
+   - `/` → new Landing/Home page
+   - `/login` (or existing login route) → login screen
+   - `/register` or `/create-account` (whatever exists) → registration screen
+3. Update navigation and buttons to point to the **actual** login and registration routes in the codebase.
+
+If necessary, create a simple React router setup (if not already present) and a central layout component.
+
+---
+
+## 3. Navigation Bar
+
+Add a top navigation bar that appears on the landing page:
+
+- Left: SlipSafe logo (use the existing SlipSafe logo asset in the project).
+- Center/Right nav links (scroll to sections on the same page):
+  - Home → scroll to top
+  - How it works → `#how-it-works`
+  - For Individuals → `#for-individuals`
+  - For Businesses → `#for-businesses`
+  - For Retailers → `#for-retailers`
+  - Pricing → `#pricing`
+  - Help → `#help`
+- Right-side buttons:
+  - **Sign In** → link to the EXISTING login route (e.g. `/login` or whatever the project uses).
+  - **Get Started Free** → link to the EXISTING registration / create-account route.
+
+Use the existing colour scheme that matches the SlipSafe login screen (blue primary) and keep the nav sticky at the top on scroll.
+
+---
+
+## 4. Hero Section (top of the landing page) + Dummy User Count
+
+Place this at the top of the landing page:
+
+**Headline:**
+> Never lose a slip again.
+
+**Sub-heading:**
+> SlipSafe turns paper and email receipts into smart, searchable records – with returns, warranties and VAT-ready reports all in one secure app.
+
+**Buttons:**
+- **Get Started Free** → registration route.
+- **View Business Plans** → scroll to `#pricing`.
+
+Below the buttons, add:
+
+1. A **trust strip** with short text tags:
+   - “Secure storage”
+   - “Smart return & warranty deadlines”
+   - “Accountant-ready exports for SMMEs”
+
+2. A **dummy social proof metric** (hard-coded for now) such as:
+   - “Join over **1 250** shoppers and businesses already protecting their slips with SlipSafe.”
+   Implement this as a simple front-end constant (e.g. `const DUMMY_USER_COUNT = 1250;`) so it is easy to replace later.
+
+On the right side of the hero, show a graphic or component using existing UI:
+- A mockup of the login screen and/or a sample receipts/warranty view, styled to look like it’s inside a laptop or phone frame.
+
+---
+
+## 5. Main Audiences Section
+
+Add a section with id `#audiences` under the hero.
+
+Section title:
+> Built for real-life receipts – not just perfect systems.
+
+Three cards/columns with these EXACT headline lines:
+
+1. **Everyday Shoppers**  
+   “For shoppers who are tired of lost, faded receipts and missing warranties – SlipSafe keeps every slip and guarantee safe, searchable and ready when you need it.”
+
+2. **SMMEs**  
+   “For SMMEs who need VAT and spending under control – SlipSafe turns everyday slips into clean, accountant-ready reports.”
+
+3. **Merchants & Retailers**  
+   “For retailers drowning in paper slips, disputes and fraud – SlipSafe turns receipts into verifiable digital records, speeding up returns and unlocking real post-purchase insight.”
+
+Add 1–2 short supporting bullets per card, but keep the main lines exactly as above.
+
+---
+
+## 6. “How SlipSafe Works” Section
+
+Add a section with id `how-it-works`.
+
+Title:
+> Three simple steps
+
+Show three steps with icons:
+
+1. **Capture your receipt**  
+   “Scan with your phone camera, upload a photo or paste an email receipt.”
+
+2. **SlipSafe reads and organises it**  
+   “Our OCR extracts totals, dates, VAT and return/warranty terms, then files everything by merchant, category and date.”
+
+3. **Use it when it counts**  
+   “Show digital proof at the till, track ‘Return by’ and ‘Warranty ends’ dates, export reports or generate verifiable claims.”
+
+---
+
+## 7. For Individuals Section
+
+Section id: `for-individuals`.
+
+Title:
+> For Individuals: No more shoeboxes, no more faded slips.
+
+Bullets:
+
+- Keep **all your personal receipts** in one secure place.  
+- Get **smart reminders** before returns and warranties expire.  
+- Store **proof of purchase** for big-ticket items without worrying about paper.  
+- Free to use – forever.
+
+CTA button:
+- **Get Started Free** → registration route.
+
+---
+
+## 8. For SMMEs Section
+
+Section id: `for-businesses`.
+
+Title:
+> For SMMEs: VAT, spend and evidence in one place.
+
+Bullets:
+
+- Separate **Business** and **Personal** profiles with their own dashboards.  
+- Capture business expenses from anywhere – owner or staff can upload slips.  
+- Get **VAT and expenditure summaries** by month, merchant and category.  
+- Export **accountant-ready CSV/PDF reports** for tax and year-end.  
+- Track return and warranty deadlines on equipment, tools and stock.
+
+CTA button:
+- **See Business Plans** → scroll to `#pricing`.
+
+---
+
+## 9. For Merchants & Retailers Section
+
+Section id: `for-retailers`.
+
+Title:
+> For Retailers: Faster returns, less fraud, clearer insight.
+
+Short intro paragraph:
+> SlipSafe gives retailers a digital layer over traditional receipts, making returns, warranties and claims faster and more reliable – without forcing a full POS replacement on day one.
+
+Bullets:
+
+- **Reduce friction at the returns desk** – staff rely on clear, digital proof instead of deciphering faded paper slips.  
+- **Cut down on fraud and “friendly fraud”** – verifiable digital receipts and claims make re-used or manipulated slips much harder.  
+- **Apply policies consistently** – standardise how return and warranty rules are applied across categories, promotions and branches.  
+- **See the post-purchase journey** – gain visibility into returns and claims by customer, category and SKU instead of losing insight once the slip leaves the store.
+
+CTA button:
+- **Talk to us about a pilot** → scrolling to `#help` is fine, or open a mailto (see Help section below).
+
+---
+
+## 10. Pricing Section
+
+Section id: `pricing`.
+
+Title:
+> Simple, transparent pricing
+
+Subheading:
+> Start free as a shopper. Upgrade to business plans when you’re ready.
+
+Create three pricing cards plus an Enterprise note.
+
+### Card 1 – SlipSafe Free – Individuals
+- **R0 / month**
+- Unlimited personal receipts
+- Smart return & warranty reminders
+- Personal dashboard & search
+- “Best for everyday shoppers”
+- Button: **Get Started Free** → registration route.
+
+### Card 2 – Business 1 (Solo)
+- For freelancers and one-person businesses  
+- 1 user • Up to 1 000 business receipts / month  
+- **Month-to-month:** R99 / month  
+- **Annual:** R80 / month (billed annually)  
+- Business dashboard & VAT summaries  
+- CSV/PDF exports for your accountant  
+- Button: **Start Solo** → link to the existing or planned business subscription/checkout flow (if none exists yet, link to a placeholder route such as `/pricing/business` for now).
+
+### Card 3 – Business Team (Pro)
+- For teams of 2–10 people buying on behalf of the business  
+- 2–10 users • Up to 5 000 business receipts / month  
+- **Month-to-month:** R269 / month  
+- **Annual:** R229 / month (billed annually)  
+- Shared workspace, staff uploads & team reports  
+- Button: **Start Pro / Talk to Sales** → either the same subscription flow or to `#help` for now.
+
+### Enterprise note
+
+Below the cards, add a small block:
+
+> **SlipSafe Enterprise (Custom)**  
+> Need more users, more receipts or deeper integration? Talk to us about a tailored Enterprise package.
+
+---
+
+## 11. Help & Contact Section
+
+Section id: `help`.
+
+Title:
+> Need help? We’re close by.
+
+Create four contact blocks and ensure the links are clickable:
+
+1. **WhatsApp Support**
+   - Text: “Chat with SlipSafe on WhatsApp”
+   - Phone: **083 678 4884**
+   - Button or link:
+     - Use this exact link:  
+       `https://wa.me/27836784884?text=Hi%20SlipSafe%2C%20I%27d%20like%20to%20know%20more%20about%20your%20app.`
+     - Open in a new tab.
+
+2. **Email**
+   - Label: “Email us”
+   - Address: **sales@slip-safe.net**
+   - Clickable link:
+     - `mailto:sales@slip-safe.net`
+
+3. **Phone**
+   - Label: “Call us”
+   - Number: **083 678 4884**
+   - Clickable link:
+     - `tel:+27836784884`
+   - Small note: “Business hours: Mon–Fri, 09:00–17:00 (SAST)”
+
+4. **Live Chat**
+   - Text: “Use the live chat bubble at the bottom of the screen to message us instantly from the website.”
+
+---
+
+## 12. Live Chat Widget
+
+Integrate a simple third-party chat widget (Crisp or Tawk.to is fine; choose one).
+
+Example with Crisp:
+
+- Add the Crisp JavaScript snippet to the main HTML template or root React layout so it loads on all pages.
+- Use a placeholder `CRISP_WEBSITE_ID` env var or a test ID; the real one will be configured later.
+- Ensure it shows as a floating chat bubble in the bottom-right corner on the landing page and login/register screens.
+
+The only requirement: the chat bubble should be visible and functional (able to send basic messages) without breaking the app.
+
+---
+
+## 13. Footer
+
+Add a footer visible on the landing page, with:
+
+- Links (anchor or routes):
+  - Home → `/`
+  - Pricing → `#pricing`
+  - Help → `#help`
+  - Terms & Conditions → create/link a simple `/terms` page placeholder
+  - Privacy Policy → create/link a simple `/privacy` page placeholder
+- Contact line:
+  - “Contact: sales@slip-safe.net · 083 678 4884”
+- Copyright:
+  - “© SlipSafe. All rights reserved. Made in South Africa.”
+
+---
+
+## 14. PWA Icon & SlipSafe Logo (Add-to-Home-Screen & Install)
+
+Ensure that when the app is installed or added to the home screen (as a PWA), it uses the **SlipSafe logo** as the icon.
+
+1. **Locate the SlipSafe logo asset** in the project (or, if needed, create/export square PNG versions of the logo at multiple resolutions: 192x192, 256x256, 384x384, 512x512 pixels).
+
+2. Place the icons in a logical public path, e.g.:
+   - `/public/icons/slipsafe-192.png`
+   - `/public/icons/slipsafe-256.png`
+   - `/public/icons/slipsafe-384.png`
+   - `/public/icons/slipsafe-512.png`
+
+3. Update or create the **Web App Manifest** (e.g. `manifest.json` or `manifest.webmanifest`) to include:
+   - `"name": "SlipSafe"`
+   - `"short_name": "SlipSafe"`
+   - `"start_url": "/"`
+   - `"display": "standalone"`
+   - `"background_color": "#ffffff"` (or existing)
+   - `"theme_color":` set to the primary SlipSafe blue
+   - `"icons":` array with the logo icons, for example:
+     ```json
+     "icons": [
+       {
+         "src": "/icons/slipsafe-192.png",
+         "sizes": "192x192",
+         "type": "image/png"
+       },
+       {
+         "src": "/icons/slipsafe-256.png",
+         "sizes": "256x256",
+         "type": "image/png"
+       },
+       {
+         "src": "/icons/slipsafe-384.png",
+         "sizes": "384x384",
+         "type": "image/png"
+       },
+       {
+         "src": "/icons/slipsafe-512.png",
+         "sizes": "512x512",
+         "type": "image/png"
+       }
+     ]
+     ```
+
+4. In the main HTML file (e.g. `index.html` for Vite/React), ensure:
+   - The manifest is linked:
+     ```html
+     <link rel="manifest" href="/manifest.webmanifest" />
+     ```
+   - There is a favicon that also uses the SlipSafe logo (e.g. `<link rel="icon" type="image/png" href="/icons/slipsafe-192.png" />`).
+   - For iOS add-to-home-screen support, also add:
+     ```html
+     <link rel="apple-touch-icon" href="/icons/slipsafe-192.png" />
+     ```
+   - `meta name="theme-color"` is set to the SlipSafe brand colour.
+
+5. Confirm in the browser:
+   - The PWA manifest loads correctly (check Application/Manifest tab in browser dev tools).
+   - Adding the app to the home screen on mobile and installing as a PWA in desktop Chrome shows the SlipSafe logo as the icon.
+
+---
+
+## 15. Implementation Notes
+
+- Use the existing colour palette and typography so the landing page matches the login screen style.
+- Use responsive, mobile-first layout (Tailwind or existing CSS). Ensure sections stack neatly on small screens.
+- Implement the **dummy user count** as a simple front-end constant in the hero section.
+- Do not break any existing authentication or receipt functionality.
+- After all changes:
+  - Ensure all nav links and buttons work:
+    - Section anchors scroll correctly.
+    - Sign In and Create Account/Registration go to the existing auth routes.
+    - WhatsApp, mailto, and tel links open correctly.
+  - Confirm the app builds and runs without TypeScript or bundler errors.
+  - Confirm the SlipSafe logo appears as the app icon when the PWA is installed or added to the home screen.
+
+Now implement this new landing/home page, routing updates, dummy user count, contact links (with sales@slip-safe.net), live chat, and PWA icon configuration in the current SlipSafe Replit project.

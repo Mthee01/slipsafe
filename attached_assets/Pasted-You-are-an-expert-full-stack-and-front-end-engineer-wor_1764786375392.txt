@@ -1,0 +1,334 @@
+You are an expert full-stack and front-end engineer working on an existing Replit project called SlipSafe.
+
+## 1. Context
+
+- The app already has:
+  - Working auth (login/register).
+  - Core receipt/claims functionality.
+  - An existing **Pricing** section/page (do NOT rebuild, only integrate).
+  - A landing page created earlier (now being upgraded visually).
+  - Separate dashboards/experiences for:
+    - Individual (personal) users
+    - Business (SMME) users
+  - Individual and Business views each already have their own retractable navigation sidebars.
+- Tech stack: React + TypeScript (likely Vite), Tailwind CSS, Framer Motion available, Node/Express backend, PWA support, session-based auth.
+
+You must NOT break any existing logic or core functionality. We are improving UX, navigation, and visuals.
+
+---
+
+## 2. High-Level Goals
+
+Upgrade the current landing page and navigation behaviour to:
+
+1. Make the landing page **lively, attractive, and interactive**:
+   - Retractable navigation sidebar on landing page.
+   - Stock-style images of diverse people/groups + UI artifacts.
+   - Smooth animations and a playful dummy user count.
+
+2. Fix navigation & auth UX:
+   - Add a **Home** button to the **Individual** and **Business** user sidebars, which returns users to the main **public landing page**.
+   - When a user is **signed in**, the “Sign In” and “Sign Up / Get Started” options must disappear from the public UI.
+   - Signed-in users should see their **name or business name** at the **top-right** of the page.
+   - Add a **“Stay logged in” / “Remember me”** option to login, extending session lifetime when checked.
+   - Ensure all sidebars (landing + personal + business) remain **retractable** and visually consistent.
+
+3. Ensure all integrations remain correct:
+   - Existing auth routes (Sign In / Register).
+   - Existing Pricing page/section.
+   - Existing contact info and PWA icon setup.
+   - Dummy user count for social proof.
+
+---
+
+## 3. Auth State & Global Layout Adjustments
+
+### 3.1 Auth state detection
+
+Use whatever existing mechanism you have (React context, global store, or a “current user” endpoint) to derive:
+
+- `isAuthenticated` (boolean)
+- `currentUser` object with:
+  - `fullName`
+  - `username`
+  - `businessName` (if applicable)
+  - `activeContext` (e.g. `"personal"` or `"business"`) if already present
+
+If not already present, create a simple **auth context** or hook (e.g. `useAuth`) that:
+
+- Exposes `isAuthenticated`, `currentUser`, `activeContext`.
+- Updates values after login/logout.
+- Can be shared between landing page and dashboard layouts.
+
+### 3.2 Top-right user/company display
+
+In the **main layout** that wraps both the landing page and dashboards:
+
+- At the **top-right** of the page, conditionally render:
+
+  - When `isAuthenticated === true`:
+    - Show text like:
+      - If `activeContext === "business"` and `businessName` exists:
+        - `businessName` or `"{businessName} (Business)"`
+      - Otherwise:
+        - User’s first name or full name, e.g. `"Hi, Mmathabo"` or `"Hi, {fullName}"`
+    - This can be next to an avatar circle with initials.
+
+  - When `isAuthenticated === false`:
+    - Do **not** show a name (leave this area empty or show generic text if you prefer).
+
+Make sure this does NOT conflict with existing admin or merchant headers.
+
+### 3.3 Show/hide Sign In / Sign Up
+
+- On the **landing page** (root `/`) and its sidebar:
+
+  - If `isAuthenticated === false`:
+    - Show “Sign In” and “Get Started Free” actions in nav/hero as currently specified.
+  - If `isAuthenticated === true`:
+    - Hide:
+      - “Sign In”
+      - “Get Started Free / Sign Up”
+    - Replace them (optionally) with a **“Open SlipSafe” / “Go to Dashboard”** button that routes to the correct landing dashboard route (e.g. personal or business, depending on `activeContext`).
+
+This means the public navigation and hero CTAs must be conditional on auth state.
+
+---
+
+## 4. “Stay Logged In” / Remember Me
+
+On the **login form**:
+
+1. Add a checkbox labelled:
+   - “Stay logged in” (or “Remember me on this device”).
+
+2. Behaviour:
+   - If unchecked (default):
+     - Keep current session behaviour (e.g. session cookie with short/default lifespan or “session only”).
+   - If checked:
+     - Extend the session lifetime.
+     - Implementation suggestion for backend (Express + session):
+       - When the login request returns success and `rememberMe` is true:
+         - Set the session cookie with a longer `maxAge` (e.g. 30 days).
+       - When false:
+         - Use the shorter/default `maxAge` or a session cookie that expires on browser close.
+
+   - Ensure secure cookie flags remain:
+     - `httpOnly: true`
+     - `secure: true` in production
+     - `sameSite` appropriate setting
+
+3. Front-end:
+   - Include `rememberMe: boolean` in the login request payload.
+   - If there is already a “stay logged in” feature implemented partially, refactor to use a clear boolean option.
+
+Test:
+- Login with and without “Stay logged in” checked.
+- Ensure that after closing and reopening the browser:
+  - With “Stay logged in” checked, the user remains authenticated (session valid) until expiration.
+  - Without it, they are logged out as per existing rule.
+
+---
+
+## 5. Navigation – Retractable Sidebar (Landing Page Only)
+
+Keep the previous requirements and ensure they still hold:
+
+### 5.1 Behaviour (Landing page)
+
+- Route `/` uses a **retractable navigation sidebar**:
+  - Desktop:
+    - Left-aligned vertical sidebar (expanded vs collapsed).
+  - Mobile:
+    - Hidden by default; opened via hamburger button.
+- Sidebar items (landing) include:
+  - Home (scroll to top)
+  - How it works → `#how-it-works`
+  - For Individuals → `#for-individuals`
+  - For Businesses → `#for-businesses`
+  - For Retailers → `#for-retailers`
+  - Pricing → `/pricing` or `#pricing`
+  - Help → `#help`
+- Auth actions (conditional as per Section 3.3):
+  - “Sign In” and “Get Started Free” only when not authenticated.
+
+Ensure this sidebar remains fully **retractable** (collapsible/expandable) and test it.
+
+---
+
+## 6. Individual & Business Dashboards – Add Home Button
+
+Currently:
+
+- Business and Individual users each have their own retractable navigation sidebar.
+- Once logged in, users can only switch between personal and business, not go back to the public home page.
+
+### 6.1 Add “Home” to Individual & Business sidebars
+
+For **both** the Individual (personal) sidebar and the Business sidebar:
+
+- Add a **top-level nav item**:
+  - Label: “Home”
+  - Icon: House/home icon.
+  - Action: Navigate to the public landing page route (`/`).
+
+This must:
+
+- NOT log the user out.
+- Simply take them back to the marketing/landing page (which will be aware that they are signed in, and will hide Sign In/Sign Up per Section 3.3).
+
+### 6.2 Sidebar retractability (Individual & Business)
+
+Ensure:
+
+- Individual sidebar remains retractable (collapse/expand).
+- Business sidebar remains retractable.
+- The new “Home” nav item appears correctly in both expanded and collapsed states (icon + tooltip or similar in collapsed mode).
+
+Test:
+
+- From personal dashboard → click Home → you go to `/` landing page, still logged in.
+- From business dashboard → click Home → you go to `/` landing page, still logged in.
+- From landing page, you can navigate back into the dashboards as usual.
+
+---
+
+## 7. Hero Section – Visuals & User Count (Landing page)
+
+Keep previously specified content and add images/animations:
+
+- Headline:
+  > Never lose a slip again.
+- Sub-heading:
+  > SlipSafe turns paper and email receipts into smart, searchable records – with returns, warranties and VAT-ready reports all in one secure app.
+- Buttons:
+  - **Get Started Free** (hidden if authenticated).
+  - **View Business Plans** → existing pricing section/page.
+- Visual:
+  - Right side: `<img>` with diverse shoppers / phone.
+    - Example URL: `https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg`
+    - Alt: “Diverse group of shoppers using a smartphone in a modern store.”
+- Dummy user count:
+  - `const DUMMY_USER_COUNT = 1250;`
+  - Animate count from 0 to 1250 on mount.
+- Animate using Framer Motion:
+  - Hero text, CTAs, and image fade/slide in.
+  - Buttons have hover scale + shadow.
+
+(Keep existing detailed instructions about animations and styling from the prior prompt.)
+
+---
+
+## 8. Main Audiences, “How It Works”, Individuals, SMMEs, Retailers, Help & Contact
+
+Keep the detailed **image prompts, alt texts, and animation instructions** for:
+
+- Main audiences (Everyday Shoppers, SMMEs, Merchants & Retailers).
+- “How SlipSafe Works” (3-step with icons/illustrations).
+- “For Individuals” section.
+- “For SMMEs” section.
+- “For Retailers” section.
+- Help & Contact section with:
+  - WhatsApp link
+  - `mailto:sales@slip-safe.net`
+  - `tel:+27836784884`
+  - Live chat bubble
+  - Friendly support team image
+
+You should NOT remove any of the previous visual/animation enhancements, only ensure they still work alongside the new auth/navigation updates.
+
+---
+
+## 9. Pricing Integration (Use Existing Pricing Section)
+
+- Do NOT rebuild pricing.
+- Ensure:
+  - Landing sidebar “Pricing” → existing pricing route or `#pricing`.
+  - Hero “View Business Plans” and SMMEs “See Business Plans” buttons → same pricing location.
+- Maintain smooth scrolling for in-page anchors if pricing is on the same page.
+
+---
+
+## 10. PWA Icon & Dummy User Count (Preserve)
+
+- Keep the PWA manifest and SlipSafe logo icons for install/add-to-home.
+- Do not remove or break existing PWA behaviour.
+- Preserve and use the dummy user count logic in hero.
+
+---
+
+## 11. Live Chat Widget
+
+- Ensure Crisp/Tawk (or chosen provider) remains integrated.
+- Floating chat bubble bottom-right on:
+  - Landing page
+  - Login
+  - Pricing
+  - Dashboards (if appropriate)
+- No conflicts with new layouts.
+
+---
+
+## 12. Responsiveness & Accessibility
+
+Make sure:
+
+- Landing sidebar, personal sidebar, and business sidebar:
+  - Are fully retractable.
+  - Work on mobile, tablet, and desktop.
+- The **Home** nav item is visible and accessible via keyboard and screen readers.
+- Conditional UI for auth:
+  - Screen readers don’t announce Sign In/Sign Up when user is already signed in.
+- Respect `prefers-reduced-motion` where reasonable for animations.
+
+---
+
+## 13. Final Testing Checklist
+
+After implementing all changes:
+
+1. **Unauthenticated user:**
+   - Load `/`:
+     - See landing page with Sign In + Get Started.
+     - Retractable landing sidebar works on desktop and mobile.
+   - Click Pricing:
+     - Goes to existing pricing page/section.
+   - Click Sign In:
+     - Goes to login screen.
+
+2. **Login with “Stay logged in” OFF:**
+   - Log in from login page.
+   - On dashboard (personal/business), ensure:
+     - Sidebar includes **Home**.
+     - Top-right shows user name (or business name).
+   - Click Home:
+     - Navigates to `/` landing page.
+     - Sign In / Get Started are now **hidden**.
+     - Optional: “Go to Dashboard” or similar appears.
+   - Close browser, reopen:
+     - Session behaves as per “short/default” life.
+
+3. **Login with “Stay logged in” ON:**
+   - Check the checkbox, log in.
+   - Confirm extended session via cookie maxAge.
+   - After closing and reopening browser:
+     - User remains logged in until cookie expiry.
+   - Landing page still hides Sign In/Sign Up while authenticated.
+
+4. **Switch between personal & business:**
+   - In dashboards:
+     - Home button sends user to `/` without logging out.
+     - Switching contexts still works as before.
+
+5. **Sidebars:**
+   - Landing, individual, and business sidebars:
+     - Collapse/expand.
+     - Work correctly on all breakpoints.
+     - Home item present in individual and business sidebars.
+
+6. **Visuals:**
+   - Images load (or use placeholders).
+   - Animations run smoothly but are not overwhelming.
+   - Page remains responsive and accessible.
+
+Now implement all of the above, updating the landing page, auth logic, and the individual/business navigation sidebars to support a Home button, “Stay logged in”, conditional Sign In/Sign Up visibility, and user/company name display, while keeping the existing pricing integration and app functionality intact.

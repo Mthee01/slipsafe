@@ -1,0 +1,364 @@
+You are an expert full-stack engineer working on an existing app called SlipSafe.
+
+## 1. Context
+
+SlipSafe is a digital receipt, returns, and warranty management platform built with:
+
+- Frontend: React 18 + TypeScript + Vite + Tailwind + shadcn/ui + TanStack Query
+- Backend: Node.js + Express + TypeScript
+- Auth: Session-based (passport-local + bcrypt)
+- Database: PostgreSQL + Drizzle ORM (with shared schema in /shared/schema.ts)
+- PWA: Service worker, IndexedDB for offline receipts, etc.
+
+Current user types and features:
+- Individuals (personal use) – free
+- Business context (SMMEs) – business profile, reports, CSV/PDF exports, team features, etc.
+
+We are introducing **paid SMME subscription plans** and integrating **Stripe** to handle payments. We also have **Business Pricing & Subscription Terms and Conditions** that users must explicitly accept before subscribing.
+
+---
+
+## 2. Business Plans & Pricing
+
+Keep Individual users free. Add Stripe-powered subscriptions only for Business plans with BOTH month-to-month and annual options:
+
+1. SlipSafe Free (Individuals)
+   - Price: R0
+   - Unlimited personal receipts
+   - No business profile or business reporting/exports.
+
+2. SlipSafe Business 1 (Solo)
+   - Target: Sole traders / freelancers / one-person SMMEs
+   - Users: 1
+   - Limit: Up to 1 000 BUSINESS receipts per month
+   - Pricing:
+     - Month-to-month: R99 / month
+     - Annual subscription: effective R80 / month (12-month commitment, billed as an annual plan)
+   - Features: business profile, business dashboard, business reporting, CSV/PDF exports.
+
+3. SlipSafe Business Team (Pro)
+   - Target: Teams where 2–10 people capture receipts
+   - Users: 2–10 included
+   - Extra users above 10: R40 / user / month (we won’t implement billing for extra users yet; just leave hooks in the model)
+   - Limit: Up to 5 000 BUSINESS receipts per month
+   - Pricing:
+     - Month-to-month: R269 / month
+     - Annual subscription: effective R229 / month (12-month commitment, billed as an annual plan)
+   - Features: all Solo features plus shared workspace, team uploads, owner/manager roles, team reports.
+
+4. SlipSafe Enterprise (Custom)
+   - Custom pricing and limits > 5 000 receipts/month and >10 users.
+   - For now: just expose a “Contact us” CTA, no automated Stripe integration yet.
+
+---
+
+## 3. Terms & Conditions (T&Cs) – Content & Requirements
+
+We have Business Pricing & Subscription Terms that must be accepted by users before they can start a paid Business plan.
+
+### 3.1 T&C content (high-level sections)
+
+Create a **“SlipSafe Business Pricing & Subscription Terms”** content page/component that includes, at minimum, these sections and ideas in clear, professional wording:
+
+1. **Overview**
+   - Explain SlipSafe as a digital receipt, returns, and warranty management platform.
+   - Clarify that individuals use it for free; SMMEs use paid plans.
+
+2. **Definitions**
+   - “SlipSafe”: the platform (PWA + merchant portal).
+   - “Customer”: the SMME or individual subscribing to a Business plan.
+   - “User”: an individual authorised by the Customer.
+   - “Business Receipts”: receipts stored in a business profile/workspace.
+
+3. **Eligibility and Scope**
+   - Free plan is for personal, non-commercial use.
+   - Business plans are for SMMEs and business users.
+   - Customer must ensure SlipSafe suits their own reporting, tax, VAT, and compliance needs.
+
+4. **Billing and Payment**
+   - Business plans can be month-to-month or annual.
+   - Month-to-month: billed monthly in advance; cancel before next billing date.
+   - Annual: 12-month commitment; billed upfront or fixed-term monthly as agreed; early termination may incur penalties or discount reversal.
+   - Payment methods: card, EFT, or other methods we support.
+   - Taxes (including VAT) may be added.
+   - Non-payment can lead to suspension/termination.
+
+5. **Upgrades, Downgrades and Plan Changes**
+   - Customers can upgrade from Solo to Pro or Enterprise as usage grows.
+   - SlipSafe may notify customers if they exceed limits and recommend upgrade.
+   - Downgrades allowed with reasonable notice and if usage fits new plan.
+   - Plan changes affect subscription fees from next billing cycle/term.
+
+6. **Fair Use and Limits**
+   - Business 1 (Solo): 1 user, up to 1 000 business receipts/month.
+   - Business Team (Pro): 2–10 users, up to 5 000 business receipts/month.
+   - Exceeding limits may require an upgrade to a higher plan/Enterprise.
+   - SlipSafe may apply fair-use measures to protect platform stability.
+
+7. **User Accounts and Security**
+   - Customer manages user access and roles.
+   - Users must keep credentials confidential and not share accounts.
+   - SlipSafe implements reasonable security but is not liable for misuse of compromised credentials.
+
+8. **Data, Privacy and Retention**
+   - SlipSafe processes personal/business data in line with data protection laws (e.g., POPIA).
+   - Receipt data is retained as long as necessary to provide the service and for a reasonable period or as required by law.
+   - Customer remains responsible for its own tax, audit, and record-keeping obligations (SlipSafe is an aid, not a replacement).
+
+9. **Support and Service Levels**
+   - “Reasonable efforts” for uptime and email support.
+   - Formal SLAs may be part of Enterprise deals.
+
+10. **Changes to Pricing and Terms**
+    - SlipSafe may adjust pricing/terms; will notify active business subscribers with reasonable notice.
+    - Continued use after changes = acceptance.
+
+11. **Cancellation and Termination**
+    - Month-to-month: runs until cancelled as per cancellation mechanism.
+    - Annual: usually fixed 12-month term; early cancellation may incur penalties.
+    - SlipSafe may suspend/terminate for non-payment, abuse, or breach.
+
+12. **Liability and Disclaimer**
+    - SlipSafe is “reasonable-effort” SaaS, not legal/tax/accounting advice.
+    - Liability is capped to subscription fees paid for the relevant period, to the extent allowed by law.
+    - Customer responsible for meeting its own tax, VAT, and compliance obligations.
+
+At the bottom, add a note like:
+“**These terms are a working draft and should be reviewed with legal counsel before being considered final.**”
+
+### 3.2 T&C acceptance requirement
+
+**MANDATORY REQUIREMENT:**  
+No user may start a paid subscription (Solo or Pro) unless they have explicitly **accepted the Business Pricing & Subscription Terms**.
+
+Implement both **UI-level** and **server-side** enforcement:
+
+1. **UI-level:**
+   - On the pricing / checkout UI where a user chooses a plan (Solo/Pro, monthly/annual), show:
+     - A link: “View SlipSafe Business Pricing & Subscription Terms” (navigates to full T&C page or opens a modal).
+     - A checkbox: `I have read and accept the SlipSafe Business Pricing & Subscription Terms`.
+   - Disable the “Subscribe” / “Continue to checkout” buttons until the checkbox is ticked.
+
+2. **Server-side:**
+   - Extend user or subscription data model to include:
+     - `termsVersionAccepted: string | null`
+     - `termsAcceptedAt: Date | null`
+   - When the frontend calls `/api/billing/create-checkout-session`, include a flag and version, e.g.:
+     - `{ planId: 'solo-monthly', termsAccepted: true, termsVersion: 'v1.0' }`
+   - In the backend handler:
+     - Reject the request (400 error) if `termsAccepted` is not true.
+     - Record `termsVersionAccepted` and `termsAcceptedAt` on the user (or subscription) before creating the Stripe Checkout session.
+   - This ensures we have a server-side record that the user accepted the terms before we start billing.
+
+---
+
+## 4. Stripe Integration Requirements
+
+Integrate **Stripe** for subscription billing.
+
+### 4.1 Environment configuration
+
+Add environment variables (do NOT hardcode anything):
+
+- STRIPE_SECRET_KEY
+- STRIPE_WEBHOOK_SECRET
+- FRONTEND_BASE_URL   (e.g. https://slipsafe.<domain>)
+- BACKEND_BASE_URL    (if needed)
+- STRIPE_PRICE_SOLO_MONTHLY
+- STRIPE_PRICE_SOLO_ANNUAL
+- STRIPE_PRICE_PRO_MONTHLY
+- STRIPE_PRICE_PRO_ANNUAL
+
+I will configure the Stripe products/prices and set these env vars.
+
+### 4.2 Backend: Billing routes (Express + TypeScript)
+
+Create a billing module (e.g. `/server/billing.ts`) and wire into `routes.ts`:
+
+1. `POST /api/billing/create-checkout-session`
+   - Authenticated route.
+   - Request body:
+     ```json
+     {
+       "planId": "solo-monthly" | "solo-annual" | "pro-monthly" | "pro-annual",
+       "termsAccepted": true,
+       "termsVersion": "v1.0"
+     }
+     ```
+   - Steps:
+     - Validate `termsAccepted === true`. If not, return 400 with clear error.
+     - Store `termsVersionAccepted` and `termsAcceptedAt` for the current user (if not already set for this version).
+     - Map `planId` to correct Stripe Price ID from env.
+     - Create/reuse Stripe Customer for the logged-in user.
+     - Create a Stripe Checkout Session for a **subscription**.
+     - Return `{ url: string }` (Stripe Checkout URL).
+
+2. `GET /api/billing/portal-session`
+   - Authenticated.
+   - If user has `stripeCustomerId` and an active subscription, create a Stripe **Customer Portal** session.
+   - Return `{ url: string }` and redirect the frontend there for managing billing (update card, cancel, etc.).
+
+3. `POST /api/billing/webhook`
+   - Raw body parsing as required by Stripe.
+   - Validate webhook with `STRIPE_WEBHOOK_SECRET`.
+   - Handle at least:
+     - `customer.subscription.created`
+     - `customer.subscription.updated`
+     - `customer.subscription.deleted`
+     - Optionally `checkout.session.completed`
+   - For each subscription event:
+     - Identify the user via `customer` or metadata.
+     - Update user’s subscription fields in Postgres:
+       - `planType` = `free | business_solo | business_pro | enterprise`
+       - `billingInterval` = `monthly | annual`
+       - `subscriptionStatus`
+       - `subscriptionCurrentPeriodEnd`
+     - Do NOT change `termsVersionAccepted` in the webhook (that’s captured at checkout creation).
+
+### 4.3 Database changes (Drizzle schema)
+
+In `shared/schema.ts` (or equivalent), extend the `users` table (or create a `subscriptions` table) to support subscriptions and T&C acceptance. Minimum on `users`:
+
+- `stripeCustomerId: string | null`
+- `stripeSubscriptionId: string | null`
+- `planType: 'free' | 'business_solo' | 'business_pro' | 'enterprise'`
+- `billingInterval: 'monthly' | 'annual' | null`
+- `subscriptionStatus: string | null`
+- `businessReceiptLimitPerMonth: number | null`
+- `businessUserLimit: number | null`
+- `subscriptionCurrentPeriodEnd: timestamp | null`
+- `termsVersionAccepted: string | null`
+- `termsAcceptedAt: timestamp | null`
+
+Update migrations, Drizzle types, and any affected TypeScript types accordingly.
+
+### 4.4 Plan limits helper
+
+Create a helper, e.g. `applyPlanLimits(planType: PlanType)` that updates:
+
+- For `business_solo`:
+  - `businessReceiptLimitPerMonth = 1000`
+  - `businessUserLimit = 1`
+- For `business_pro`:
+  - `businessReceiptLimitPerMonth = 5000`
+  - `businessUserLimit = 10`
+- For `enterprise`:
+  - `businessReceiptLimitPerMonth` and `businessUserLimit` can be null or large; we handle manually later.
+- For `free`:
+  - `businessReceiptLimitPerMonth = 0`
+  - `businessUserLimit = 0`
+
+Call this helper whenever subscription changes (e.g. in webhook handling).
+
+---
+
+## 5. Frontend Changes (React + TS)
+
+### 5.1 Pricing / Plans page
+
+Create `/pricing` (or similar) page:
+
+- Show tiles:
+  1. **SlipSafe Free (Individuals)** – R0
+  2. **Business 1 (Solo)**:
+     - R99 / month (month-to-month)
+     - R80 / month (billed annually)
+     - Buttons:
+       - “Start Solo – Monthly”
+       - “Start Solo – Annual”
+  3. **Business Team (Pro)**:
+     - R269 / month (month-to-month)
+     - R229 / month (billed annually)
+     - Buttons:
+       - “Start Pro – Monthly”
+       - “Start Pro – Annual”
+  4. **Enterprise (Custom)**:
+     - “Contact us” button or mailto / contact form (no Stripe).
+
+- Under the Solo and Pro tiles, add:
+  - A link: “View SlipSafe Business Pricing & Subscription Terms”
+    - Navigates to `/terms/business` page or opens modal.
+  - A checkbox:
+    - Label: “I have read and accept the SlipSafe Business Pricing & Subscription Terms”
+    - Controlled state per subscription action (or shared).
+
+- Only enable the **“Start …”** buttons if:
+  - User is logged in AND
+  - The T&C checkbox is ticked.
+
+When a button is clicked:
+
+- If NOT logged in:
+  - Redirect to login and preserve intended plan (e.g. via query param).
+- If logged in and T&C accepted:
+  - Call `/api/billing/create-checkout-session` with the correct `planId` and `termsVersion` (e.g. “v1.0”).
+  - On success, redirect to returned Stripe Checkout URL.
+
+Style with Tailwind + shadcn/ui in line with existing SlipSafe theme.
+
+### 5.2 Terms & Conditions page
+
+Create a page, e.g. `/terms/business`:
+
+- Show the full T&C content described in section 3.1 (Overview, Definitions, Billing, Fair Use, etc.).
+- This can be a simple scrollable page with headings and paragraphs.
+
+From the pricing page:
+
+- “View SlipSafe Business Pricing & Subscription Terms” should link here.
+
+### 5.3 Account / Profile page
+
+On the profile/settings page:
+
+- Display subscription info:
+  - Plan: Free / Business 1 (Solo) / Business Team (Pro) / Enterprise.
+  - Billing interval: Monthly / Annual.
+  - Status: Active / Past due / Canceled.
+  - Next renewal date (if available).
+  - Terms:
+    - If `termsVersionAccepted` is set, show “You accepted the Business Pricing & Subscription Terms (vX.X) on [date]”.
+
+- If the user has an active Stripe subscription:
+  - Show a “Manage billing” button.
+  - On click: call `/api/billing/portal-session`, redirect to `url` returned.
+
+---
+
+## 6. Feature Gating & Enforcement
+
+Update backend and frontend to enforce:
+
+1. **Business-only features** (business profile, business reports, exports, team workspace):
+   - Only available if `planType` is one of `business_solo`, `business_pro`, or `enterprise`.
+   - If `planType = 'free'`:
+     - Show an upsell message and link to `/pricing`.
+
+2. **Receipt limits**:
+   - When creating a **business** receipt:
+     - Check current month’s business receipt count against `businessReceiptLimitPerMonth`.
+     - If exceeded, return an error and show a message suggesting upgrade or contacting support.
+   - Do NOT limit personal receipts.
+
+3. **User limits** (basic for now):
+   - When inviting/adding team members to a business workspace:
+     - Prevent going over `businessUserLimit`.
+   - Do not implement extra user billing logic yet; just treat >10 as Enterprise or manual exception later.
+
+---
+
+## 7. Implementation Quality
+
+- Preserve existing features (receipt capture, OCR, PWA behaviour, etc.).
+- Use TypeScript types consistently across backend and frontend.
+- Handle errors gracefully (toasts/snackbars for billing/terms errors).
+- Keep Stripe secrets in env vars, never on the frontend.
+- Validate Stripe webhooks and T&C acceptance on the server.
+
+Please:
+
+1. Inspect the existing codebase in this Replit project.
+2. Implement the Stripe integration, subscription model, and T&C page and acceptance flow as described.
+3. Add the `/pricing` and `/terms/business` pages with proper routing and UI.
+4. Make sure users cannot start a paid Business plan without explicitly accepting the T&Cs.
+5. Confirm the app builds and runs with these changes.

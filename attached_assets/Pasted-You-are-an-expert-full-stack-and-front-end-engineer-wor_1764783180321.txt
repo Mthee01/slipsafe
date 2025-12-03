@@ -1,0 +1,461 @@
+You are an expert full-stack and front-end engineer working on an existing Replit project called SlipSafe.
+
+## 1. Context
+
+- The app already has:
+  - Working auth (login/register).
+  - Core receipt/claims functionality.
+  - An existing **Pricing** section/page (do NOT rebuild, only integrate).
+  - A basic landing page created earlier (currently dull; we want to visually upgrade it).
+- Tech stack: React + TypeScript (likely Vite), Tailwind CSS, Framer Motion available, Node/Express backend, PWA support.
+
+## 2. Goal
+
+Take the **current landing page implementation** and upgrade it to be:
+
+- **Lively, attractive, and interactive**, not static or dull.
+- Using a **retractable navigation sidebar** for the landing page (desktop + mobile friendly).
+- Rich in **visuals**: stock-style images of **diverse people/groups** and relevant artifacts/objects, wired in as `<img>` placeholders with proper alt text and classes.
+- Lightly animated: smooth **entrance transitions, hover effects, and a playful user count animation**.
+- Still integrated correctly with:
+  - Existing auth routes (Sign In / Register).
+  - Existing Pricing page/section.
+  - Existing contact info and PWA icon setup.
+  - Dummy user count for social proof.
+
+Do NOT break any existing logic; we are mostly enhancing layout and UI.
+
+---
+
+## 3. Navigation – Retractable Sidebar (Landing Page Only)
+
+Replace or augment the current top nav on the landing page with a **retractable navigation sidebar**:
+
+### 3.1 Behaviour
+
+- The sidebar is used on the **landing page** (route `/`) only.  
+  Do NOT change any nav inside the authenticated app/dashboard unless it’s clearly shared and safe.
+
+- Desktop:
+  - Left-aligned vertical sidebar that can collapse/expand.
+  - Default state: expanded (shows icons + labels).
+  - Collapse on click of a toggle button (e.g. chevron icon) to show icons only.
+- Mobile:
+  - Sidebar hidden by default.
+  - Show a **hamburger button** at the top (e.g. fixed top-left or top-right).
+  - Tapping the hamburger opens a sliding drawer sidebar from the left.
+  - Tapping outside or on a link closes it.
+
+### 3.2 Sidebar Content
+
+Sidebar should include:
+
+- SlipSafe logo at the top.
+- Navigation items (these can scroll to anchors or go to routes):
+
+  - Home → scroll to top.
+  - How it works → `#how-it-works`.
+  - For Individuals → `#for-individuals`.
+  - For Businesses → `#for-businesses`.
+  - For Retailers → `#for-retailers`.
+  - Pricing → **link to existing pricing**:
+    - If pricing is on a route like `/pricing`, link there.
+    - If pricing is on the same page, scroll to `#pricing`.
+  - Help → `#help`.
+
+- At the bottom of the sidebar:
+  - Buttons or links:
+    - **Sign In** → existing login route (e.g. `/login`).
+    - **Get Started Free** → existing register route.
+
+Use Tailwind + icons (e.g. Lucide or similar) and add hover states (background highlight + slight scale).
+
+**Sidebar Icons (artifacts):**
+
+Use a consistent line icon style (Lucide/Feather/Heroicons):
+
+- Home → house icon  
+- How it works → play/steps icon  
+- For Individuals → single user icon  
+- For Businesses → briefcase or 3-people icon  
+- For Retailers → shopping cart / barcode icon  
+- Pricing → price tag / credit card icon  
+- Help → chat bubble / question mark icon  
+
+---
+
+## 4. Hero Section – More Visual, Animated, with User Count
+
+Refine the current hero section to be more dynamic:
+
+**Content (keep base text but make it lively):**
+
+- Headline:
+  > Never lose a slip again.
+
+- Sub-heading:
+  > SlipSafe turns paper and email receipts into smart, searchable records – with returns, warranties and VAT-ready reports all in one secure app.
+
+- Buttons:
+  - **Get Started Free** → registration.
+  - **View Business Plans** → existing pricing page/section.
+
+### 4.1 Visuals (Hero Image + Objects)
+
+Use a **large background or side image** showing diverse people shopping or using a phone app.
+
+- Example stock-style URL (placeholder in `<img src="">`):
+  - `https://images.pexels.com/photos/3184465/pexels-photo-3184465.jpeg`  
+    (diverse group in a modern setting)
+- Place this image on the right with a soft gradient overlay so hero text remains readable.
+
+**Recommended AI image prompt for hero (for designer/external tool):**
+
+> “A diverse group of shoppers in a modern supermarket, smiling and looking at a smartphone screen together. Bright lighting, clean retail shelves in the background, subtle bokeh, professional lifestyle photography style.”
+
+**Hero overlay objects/icons:**
+
+- Phone screen mockup showing:
+  - Digital receipt
+  - “Return by 15 Jan”
+  - “Warranty ends 15 Dec”
+- Small receipt icon and shield/check icon around the hero area.
+
+### 4.2 Dummy user count (animated)
+
+- Implement a constant:  
+  `const DUMMY_USER_COUNT = 1250;`
+- Display text near the hero buttons, e.g.:
+
+  > Join over **1 250** shoppers and businesses already protecting their slips with SlipSafe.
+
+- Animate the number counting up from 0 to 1250 using Framer Motion or `useEffect` + `setInterval`:
+  - Smooth, quick animation when the hero mounts.
+
+### 4.3 Animations
+
+Use Framer Motion on:
+
+- Hero heading + sub-heading:
+  - Fade in + slight upward motion.
+- Buttons:
+  - Slight scale/opacity on load.
+
+Tailwind hover effects for CTAs, e.g.:
+
+- `hover:scale-105 hover:shadow-lg transition`
+
+---
+
+## 5. Main Audiences – With Imagery & Motion
+
+Keep the **three audience statements** exactly but enhance layout and visuals.
+
+### 5.1 Section Settings
+
+- Section title:
+  > Built for real-life receipts – not just perfect systems.
+
+- Use a grid of three cards, each with:
+  - An image.
+  - Title.
+  - Short statement.
+  - Small decorative objects/icons.
+
+### 5.2 Text (keep exactly):
+
+1. **Everyday Shoppers**  
+   “For shoppers who are tired of lost, faded receipts and missing warranties – SlipSafe keeps every slip and guarantee safe, searchable and ready when you need it.”
+
+2. **SMMEs**  
+   “For SMMEs who need VAT and spending under control – SlipSafe turns everyday slips into clean, accountant-ready reports.”
+
+3. **Merchants & Retailers**  
+   “For retailers drowning in paper slips, disputes and fraud – SlipSafe turns receipts into verifiable digital records, speeding up returns and unlocking real post-purchase insight.”
+
+### 5.3 Images (stock-style, diverse) + prompts
+
+Use `<img>` tags with responsive classes and meaningful alt text, and point them to real URLs or placeholder URLs. For example:
+
+- **Everyday Shoppers**  
+  - Example image URL:  
+    `https://images.pexels.com/photos/3965552/pexels-photo-3965552.jpeg`  
+  - Alt: “Young shoppers looking at a smartphone while shopping.”
+  - AI prompt (for designer/external tool):  
+    > “A Black woman in casual clothes sitting at a kitchen table, checking a paper receipt while looking at her smartphone, warm natural light, cozy home background, lifestyle photography.”
+
+- **SMMEs**  
+  - Example image URL:  
+    `https://images.pexels.com/photos/3184291/pexels-photo-3184291.jpeg`  
+  - Alt: “Small business owner working on a laptop with receipts and a calculator.”
+  - AI prompt:  
+    > “A small business owner and her team in a cosy office, working on a laptop with scattered receipts and a calculator on the table. Charts on a screen in the background. Professional yet relaxed, diverse team, modern style.”
+
+- **Merchants & Retailers**  
+  - Example image URL:  
+    `https://images.pexels.com/photos/5632371/pexels-photo-5632371.jpeg`  
+  - Alt: “Retail cashier assisting a customer at checkout.”
+  - AI prompt:  
+    > “A supermarket customer service desk where a customer holds a boxed appliance while a cashier scans a receipt at the computer. Modern store interior, focus on the interaction.”
+
+### 5.4 Audience card objects & animations
+
+- Everyday Shoppers:
+  - Faded receipt icon in the corner.
+  - Calendar/clock icon indicating return deadlines.
+- SMMEs:
+  - VAT badge (e.g. “VAT 15%”), small bar/pie chart.
+- Merchants & Retailers:
+  - POS terminal + tiny digital receipt with QR code.
+  - Shield/lock icon to suggest fraud reduction.
+
+**Animations & interactions:**
+
+- Use Framer Motion to animate each card on scroll (fade + slight scale or slide).
+- Hover effects using Tailwind:
+  - `hover:-translate-y-1 hover:shadow-lg hover:scale-105 transition`
+
+---
+
+## 6. “How SlipSafe Works” – Add Visual Objects
+
+Section id: `how-it-works`.
+
+Keep the three-step content, but:
+
+- Use a horizontal or vertical layout with icons/illustrations for each step.
+- Each step is a card with title, description, and an object image/icon.
+
+### 6.1 Steps (text)
+
+1. **Capture your receipt**  
+   “Scan with your phone camera, upload a photo or paste an email receipt.”
+
+2. **SlipSafe reads and organises it**  
+   “Our OCR extracts totals, dates, VAT and return/warranty terms, then files everything by merchant, category and date.”
+
+3. **Use it when it counts**  
+   “Show digital proof at the till, track ‘Return by’ and ‘Warranty ends’ dates, export reports or generate verifiable claims.”
+
+### 6.2 Icons / image prompts per step
+
+- **Step 1 – Capture:**
+  - Illustration/icon: smartphone with camera frame over a paper receipt.
+  - AI prompt:  
+    > “Flat vector illustration of a smartphone camera scanning a paper receipt, with a rectangular focus frame and sparkles around it, on a white background, minimal blue accent.”
+
+- **Step 2 – OCR & organise:**
+  - Illustration/icon: laptop screen showing a simple table of receipts and category tags.
+  - AI prompt:  
+    > “Flat vector illustration of a laptop screen showing a simple table of receipts and colorful category tags, with floating icons for VAT, calendar, and pie chart, minimal fintech style, blue and purple accents.”
+
+- **Step 3 – Use when it counts:**
+  - Illustration/icon: customer holding product box + phone with big green tick.
+  - AI prompt:  
+    > “Flat illustration of a customer holding a product box in one hand and a smartphone showing a big green check mark in the other, standing at a store returns counter. Minimal, modern style, white background with soft gradients.”
+
+### 6.3 Animation
+
+Use Framer Motion:
+
+- When the section enters viewport, each step card slides in with a staggered delay.
+- Light hover effects for each card (slight lift + shadow).
+
+---
+
+## 7. For Individuals, SMMEs, Retailers – Section Imagery & Motion
+
+### 7.1 For Individuals (`#for-individuals`)
+
+- Keep the previously specified bullets (personal receipts, reminders, proof of purchase, free).
+- Layout: text left, image right on desktop; stacked on mobile.
+
+**Image:**
+
+- Example search/URL: person at home managing receipts on phone.  
+  E.g. any image similar to:  
+  `https://images.pexels.com/photos/4476376/pexels-photo-4476376.jpeg` (placeholder style).
+- Alt: “Person at home managing receipts on their smartphone.”
+- AI prompt:  
+  > “A person relaxing on a couch at home, focusing on their smartphone. On the coffee table, there are a few neatly stacked receipts. Warm, calm environment, lifestyle photography, natural light.”
+
+**Objects:**
+
+- Faint calendar icon with a highlighted date.
+- Background pattern of subtle receipt outlines.
+
+**Animation:**
+
+- Fade-in/slide-in from left/right when scrolled into view.
+
+---
+
+### 7.2 For SMMEs (`#for-businesses`)
+
+- Keep the bullets (Business vs Personal profiles, staff uploads, VAT & expenditure summaries, exports, deadlines).
+
+**Image:**
+
+- Example: small team in an office or café owner with laptop & receipts.  
+  Placeholder idea:  
+  `https://images.pexels.com/photos/3184296/pexels-photo-3184296.jpeg`
+- Alt: “Small business team reviewing finances on laptop with paperwork.”
+- AI prompt:  
+  > “A cafe owner behind the counter looking at a laptop screen showing financial charts, with receipts and invoices spread on the counter. Bright, inviting atmosphere, modern small business aesthetic.”
+
+**Objects:**
+
+- CSV/PDF download icon.
+- Bar chart with upward trend.
+- VAT badge (15%).
+
+**Layout & animation:**
+
+- Alternate layout vs Individuals (image left, text right).
+- Framer Motion slide-in + slight parallax or stagger.
+
+---
+
+### 7.3 For Retailers (`#for-retailers`)
+
+- Keep the intro + bullets about faster returns, less fraud, consistent policies, post-purchase insight.
+
+**Image:**
+
+- Example: customer at returns desk with box & phone, staff assisting.  
+  Placeholder idea:  
+  `https://images.pexels.com/photos/5632371/pexels-photo-5632371.jpeg`
+- Alt: “Retail staff processing a customer return at a service desk.”
+- AI prompt:  
+  > “A busy supermarket customer service desk where a staff member in uniform is assisting a customer with a return. The customer is holding both a product box and a smartphone. Modern bright retail environment.”
+
+**Objects:**
+
+- QR code icon + green tick.
+- Small “x → ✓” visual to suggest reduced fraud.
+
+**Layout & animation:**
+
+- Text + image side-by-side, swapping sides from previous section for visual rhythm.
+- Slide/fade in on scroll.
+
+Use Tailwind for spacing, subtle gradients, and Framer Motion for entrance effects.
+
+---
+
+## 8. Pricing Integration (Use Existing Pricing Section)
+
+**Do not rebuild pricing.**
+
+- Detect where pricing currently lives:
+  - If it’s a dedicated route `/pricing`, ensure:
+    - Sidebar “Pricing” navigates to `/pricing`.
+    - Hero “View Business Plans” and SMMEs “See Business Plans” buttons also go to `/pricing`.
+  - If pricing is an in-page section (e.g. `id="pricing"` on the landing), ensure:
+    - Sidebar “Pricing” and relevant buttons scroll smoothly to `#pricing`.
+
+Use smooth scrolling (e.g. `scrollIntoView` or a small helper) for anchor-based navigation.
+
+---
+
+## 9. Help & Contact Section (Keep but Style & Animate)
+
+Keep the same content and links:
+
+- WhatsApp:  
+  `https://wa.me/27836784884?text=Hi%20SlipSafe%2C%20I%27d%20like%20to%20know%20more%20about%20your%20app.`
+- Email:  
+  `mailto:sales@slip-safe.net`
+- Phone:  
+  `tel:+27836784884`
+- Mention live chat.
+
+### Visuals:
+
+- Use a light background, e.g. soft gradient.
+- Add an image of a friendly, diverse support team.
+
+  - Example placeholder image:  
+    `https://images.pexels.com/photos/8867431/pexels-photo-8867431.jpeg`
+  - Alt: “Friendly customer support team with headsets at computers.”
+  - AI prompt:  
+    > “A diverse customer support team sitting at computers wearing headsets, smiling and looking approachable, bright office environment, clean modern support imagery.”
+
+- Each contact method (WhatsApp, Email, Phone, Chat) in its own card with icon:
+  - WhatsApp → WhatsApp bubble icon.
+  - Email → envelope icon.
+  - Phone → handset icon.
+  - Live chat → chat bubble with three dots and a subtle pulse animation.
+
+### Animation:
+
+- Fade-in from bottom as the section enters the viewport.
+- Hover/click states on cards (scale, shadow, outline).
+
+---
+
+## 10. Live Chat Widget (Crisp/Tawk – keep)
+
+If not already present, keep or add the third-party chat widget (Crisp or Tawk.to) so:
+
+- A floating bubble appears bottom-right.
+- It works on landing, login, and pricing pages.
+- Ensure no conflicts with new layout.
+
+---
+
+## 11. Background Motifs (Global Visuals)
+
+Add subtle background motifs for cohesion (non-blocking, decorative):
+
+- Light grey line icons of:
+  - Receipts
+  - Shields with check marks
+  - Calendars
+  - Small data dots / lines
+
+These can be created as a tiny repeated SVG or background pattern.
+
+Optional AI prompt (for pattern):
+
+> “A seamless pattern of light grey line icons: receipts, shields with check marks, calendars, and small data dots, on a white background, super subtle and minimal, suitable as a fintech webpage background.”
+
+Use low opacity so text remains fully readable.
+
+---
+
+## 12. Sidebar + Layout Responsiveness
+
+Ensure:
+
+- Sidebar + hero + sections look good on:
+  - Mobile (small screens),
+  - Tablet,
+  - Desktop.
+- The main content shifts right when the sidebar is expanded on desktop.
+- On mobile, content stays full-width; sidebar overlays as a drawer.
+
+Use Tailwind breakpoints (`sm`, `md`, `lg`) and flex/grid layouts.
+
+---
+
+## 13. PWA Icon & Dummy User Count (Preserve)
+
+- Keep the existing PWA manifest + icons using the SlipSafe logo for install/add-to-home; do not remove previous configuration.
+- Maintain the dummy user count constant and its animation in the hero.
+
+---
+
+## 14. Final Checks
+
+After implementing the visual/interactive upgrades:
+
+- All existing routes (login, register, pricing, etc.) still work.
+- All anchors (`#how-it-works`, `#for-individuals`, `#for-businesses`, `#for-retailers`, `#help`) scroll correctly.
+- Sidebar opens/closes smoothly and doesn’t hide essential content.
+- All images are responsive and have meaningful `alt` text.
+- External image URLs are used as placeholders and can be swapped for production assets later.
+- Animations are smooth and not overwhelming (respect `prefers-reduced-motion` if feasible).
+- The app builds and runs without TypeScript or bundler errors.
+
+Now, scan the current landing page component(s) and refactor them according to this spec: add a retractable sidebar, diverse stock imagery with the prompts above, animations, and interactivity while keeping existing pricing integration and functionality intact.
