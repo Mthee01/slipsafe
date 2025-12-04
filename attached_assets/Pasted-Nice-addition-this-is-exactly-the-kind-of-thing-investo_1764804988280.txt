@@ -1,0 +1,467 @@
+Nice addition – this is exactly the kind of thing investors and accountants will ask about later anyway. Here’s the updated Replit master prompt, with:
+	•	Solo / Pro / Enterprise plans
+	•	A reusable plan-limit check function
+	•	Automatic upgrade recommendations when limits are hit
+	•	Ability for users to upgrade/downgrade plans at will (with safety checks)
+
+You can copy–paste this straight into Replit’s AI:
+
+You are an expert TypeScript/Node/React engineer working on an existing Replit project called **SlipSafe**.
+
+## 0. Existing Context (Very Important – read first)
+
+SlipSafe is already built with:
+
+- Backend:
+  - Node + Express
+  - TypeScript
+  - PostgreSQL (via Neon)
+  - Drizzle ORM (schemas in `schema.ts` or similar)
+- Frontend:
+  - React + TypeScript
+  - Vite
+  - TailwindCSS
+  - TanStack Query
+- Current data model includes at least:
+  - `users` table (with personal and some business fields)
+  - `purchases` table (receipts)
+  - `claims`, `merchant_rules`, etc.
+- Business logic:
+  - Supports **Personal** and **Business** context.
+  - Pricing already mentions:
+    - **Business 1 (Solo)** – 1 user, up to 1 000 business receipts per month.
+    - **Business Team (Pro)** – 2–10 users, up to 5 000 business receipts per month.
+    - **Enterprise** – bespoke, higher/custom limits.
+  - Backend currently behaves like a **single-user business account**. There is no proper organisation layer or enforcement of team limits.
+
+We now need to implement a proper **organisation / team model** and **plan management** so multiple users can share the same subscription, stay within plan limits, and produce **one consolidated VAT & expenditure report** per business.
+
+Do NOT break existing endpoints or behaviours for personal users.
+
+---
+
+## 1. High-Level Goals
+
+Implement:
+
+1. A proper **organisation layer** for business customers:
+   - `organizations` table (business account).
+   - `organization_members` table (users belonging to that organisation with roles).
+   - A link from business receipts to `organization_id`.
+
+2. Support three business plans:
+   - **Business 1 (Solo)** – 1 user, up to 1 000 receipts/month.
+   - **Business Team (Pro)** – up to 10 users, up to 5 000 receipts/month.
+   - **Enterprise** – bespoke (“no hard-coded limits”, but still track usage).
+
+3. Implement a reusable **plan limit check function** that:
+   - Validates user-count and receipt-count limits for an organisation.
+   - When limits are reached or exceeded:
+     - Blocks the action if necessary (e.g. cannot add 11th user to Pro).
+     - Returns data that allows the UI to **recommend appropriate upgrades** (e.g. from Solo → Pro, from Pro → Enterprise).
+
+4. Allow organisation owners to **upgrade/downgrade plans at will**:
+   - Changing `planId` from Solo ↔ Pro ↔ Enterprise.
+   - On downgrade, enforce constraints (e.g. cannot downgrade to Solo if the org currently has 3 members).
+
+5. For each business customer (organisation), enable:
+   - **Detail reports**: all receipts across all staff in that organisation.
+   - **Summary reports**: VAT & expenditure totals by month, category, merchant (single accountant-ready report per company).
+
+6. Keep all existing **Personal** user behaviour intact.
+
+We are adding structure and plan management, not rewriting everything.
+
+---
+
+## 2. Database / Schema Changes (Drizzle + SQL)
+
+### 2.1 Add/extend `subscription_plans` table
+
+Create a new table or extend the existing one for plan definitions.
+
+```ts
+export const subscriptionPlans = pgTable('subscription_plans', {
+  id: varchar('id').primaryKey(),
+  name: varchar('name').notNull(),            // 'Business 1 (Solo)', 'Business Team (Pro)', 'Enterprise'
+  code: varchar('code').notNull().unique(),   // 'BUSINESS_SOLO', 'BUSINESS_PRO', 'BUSINESS_ENTERPRISE'
+  maxUsers: integer('max_users'),             // 1, 10, or NULL for Enterprise (no enforced limit)
+  maxReceiptsPerMonth: integer('max_receipts_per_month'), // 1000, 5000, or NULL for Enterprise
+  billingPeriod: varchar('billing_period').notNull(), // 'monthly','annual'
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+Seed at least three plans:
+	•	BUSINESS_SOLO
+	•	name = 'Business 1 (Solo)'
+	•	maxUsers = 1
+	•	maxReceiptsPerMonth = 1000
+	•	BUSINESS_PRO
+	•	name = 'Business Team (Pro)'
+	•	maxUsers = 10
+	•	maxReceiptsPerMonth = 5000
+	•	BUSINESS_ENTERPRISE
+	•	name = 'Enterprise'
+	•	maxUsers = NULL (meaning “no strict limit enforced in code”)
+	•	maxReceiptsPerMonth = NULL
+	•	Used for bespoke customers.
+
+⸻
+
+2.2 Add organizations table
+
+export const organizations = pgTable('organizations', {
+  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar('name').notNull(), // business name
+  ownerUserId: varchar('owner_user_id').notNull().references(() => users.id),
+  planId: varchar('plan_id').notNull().references(() => subscriptionPlans.id),
+  vatNumber: varchar('vat_number'),
+  taxId: varchar('tax_id'),
+  registrationNumber: varchar('registration_number'),
+  billingEmail: varchar('billing_email').notNull(),
+  billingStatus: varchar('billing_status').notNull().default('active'), // 'active','past_due','canceled'
+  currentPeriodStart: date('current_period_start'),
+  currentPeriodEnd: date('current_period_end'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+
+⸻
+
+2.3 Add organization_members table
+
+export const organizationMembers = pgTable('organization_members', {
+  organizationId: varchar('organization_id')
+    .notNull()
+    .references(() => organizations.id, { onDelete: 'cascade' }),
+  userId: varchar('user_id')
+    .notNull()
+    .references(() => users.id, { onDelete: 'cascade' }),
+  role: varchar('role').notNull().default('member'), // 'owner','admin','member'
+  invitedBy: varchar('invited_by').references(() => users.id),
+  createdAt: timestamp('created_at').defaultNow(),
+}, (table) => {
+  return {
+    pk: primaryKey({ columns: [table.organizationId, table.userId] }),
+  };
+});
+
+We will enforce member limits via an application-level plan check function (see Section 3).
+
+⸻
+
+2.4 Optional: organization_subscriptions table
+
+If you want to track Stripe or other billing provider:
+
+export const organizationSubscriptions = pgTable('organization_subscriptions', {
+  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar('organization_id')
+    .notNull()
+    .references(() => organizations.id),
+  planId: varchar('plan_id')
+    .notNull()
+    .references(() => subscriptionPlans.id),
+  stripeSubscriptionId: varchar('stripe_subscription_id'),
+  status: varchar('status').notNull(), // 'active','trialing','canceled','past_due'
+  currentPeriodStart: timestamp('current_period_start'),
+  currentPeriodEnd: timestamp('current_period_end'),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+
+⸻
+
+2.5 Extend users with active organisation
+
+// In users schema
+activeOrganizationId: varchar('active_organization_id').references(() => organizations.id),
+
+This is used for UI context (which org’s dashboard they’re on).
+
+⸻
+
+2.6 Extend purchases with organization_id
+
+export const purchases = pgTable('purchases', {
+  // existing fields...
+  id: varchar('id').primaryKey().default(sql`gen_random_uuid()`),
+  userId: varchar('user_id').notNull().references(() => users.id),
+  // ...
+  context: varchar('context').default('personal'), // 'personal' or 'business'
+  organizationId: varchar('organization_id').references(() => organizations.id),
+  createdAt: timestamp('created_at').defaultNow(),
+});
+
+Usage:
+	•	Personal: context = 'personal', organizationId = NULL.
+	•	Business (all plans): context = 'business', organizationId = orgId, userId = uploader.
+
+⸻
+
+3. Plan Enforcement & Upgrade Recommendation Function
+
+Create a reusable utility (e.g. in server/lib/planLimits.ts) that can be called from various places (add member, upload receipt, etc.).
+
+3.1 Function signature
+
+Example:
+
+type PlanLimitCheckType = 'members' | 'receipts';
+
+interface PlanLimitResult {
+  ok: boolean;
+  reason?: 'max_users_reached' | 'max_receipts_reached';
+  message?: string;
+  recommendation?: {
+    recommendedPlanCode: string; // e.g. 'BUSINESS_PRO', 'BUSINESS_ENTERPRISE'
+    recommendedPlanName: string;
+    reason: string;
+  };
+}
+
+async function checkPlanLimit(
+  organizationId: string,
+  type: PlanLimitCheckType,
+  options?: { monthStart?: Date; monthEnd?: Date }
+): Promise<PlanLimitResult> {
+  // implement as described below
+}
+
+3.2 Logic for type = 'members'
+	1.	Fetch the organisation and its plan:
+	•	organizations → subscription_plans to get maxUsers and code.
+	2.	If maxUsers is NULL (Enterprise):
+	•	Return { ok: true } (no hard limit).
+	3.	Count current members:
+
+SELECT COUNT(*) FROM organization_members WHERE organization_id = $orgId;
+
+
+	4.	If count < maxUsers → { ok: true }.
+	5.	If count >= maxUsers:
+	•	Construct an upgrade recommendation:
+	•	If current plan is Solo (BUSINESS_SOLO):
+	•	Recommend BUSINESS_PRO.
+	•	If current plan is Pro (BUSINESS_PRO):
+	•	Recommend BUSINESS_ENTERPRISE.
+	•	If Enterprise: no further recommendation; just return ok: false if you ever decide to set a limit.
+	•	Return:
+
+{
+  ok: false,
+  reason: 'max_users_reached',
+  message: 'You have reached the maximum number of users for your current plan.',
+  recommendation: {
+    recommendedPlanCode: 'BUSINESS_PRO', // or 'BUSINESS_ENTERPRISE'
+    recommendedPlanName: 'Business Team (Pro)', // etc
+    reason: 'You need more team members than your current plan allows.'
+  }
+}
+
+
+
+3.3 Logic for type = 'receipts'
+	1.	Fetch organisation and plan:
+	•	Get maxReceiptsPerMonth and plan code.
+	2.	If maxReceiptsPerMonth is NULL (Enterprise):
+	•	Return { ok: true } (no hard limit).
+	3.	Determine month range:
+	•	Use options.monthStart/monthEnd if provided; otherwise compute for the current month.
+	4.	Count receipts for that month:
+
+SELECT COUNT(*) 
+FROM purchases 
+WHERE organization_id = $orgId
+  AND context = 'business'
+  AND date BETWEEN $monthStart AND $monthEnd;
+
+
+	5.	If count < maxReceiptsPerMonth → { ok: true }.
+	6.	If count >= maxReceiptsPerMonth:
+	•	Recommend upgrades similar to above:
+	•	Solo → recommend Pro.
+	•	Pro → recommend Enterprise.
+	•	Return:
+
+{
+  ok: false,
+  reason: 'max_receipts_reached',
+  message: 'You have reached the monthly receipt limit for your current plan.',
+  recommendation: {
+    recommendedPlanCode: 'BUSINESS_PRO', // or 'BUSINESS_ENTERPRISE'
+    recommendedPlanName: 'Business Team (Pro)',
+    reason: 'You are uploading more receipts than your current plan allows each month.'
+  }
+}
+
+
+
+⸻
+
+4. Business Logic: Where to Use checkPlanLimit
+
+4.1 When adding a team member
+
+In the endpoint like:
+	•	POST /api/organizations/:organizationId/invite-member
+
+Before inserting a new organization_members row:
+	•	Call checkPlanLimit(orgId, 'members').
+	•	If result.ok === false:
+	•	Return HTTP 400 or 409 with:
+	•	message
+	•	recommendation object.
+	•	Frontend can then show:
+	•	“You’ve reached the maximum users for your plan. Consider upgrading to Business Team (Pro).”
+
+4.2 When adding a business receipt
+
+In the endpoint that confirms/saves a business receipt (e.g. POST /api/receipts/confirm for context='business'):
+	•	Determine organizationId (from body or activeOrganizationId).
+	•	Call checkPlanLimit(orgId, 'receipts').
+	•	If result.ok === false:
+	•	Reject the upload.
+	•	Return a message and upgrade recommendation that frontend can show as:
+	•	“You’ve hit the 1 000 receipts/month limit on Business 1 (Solo). Upgrade to Business Team (Pro) to keep adding receipts.”
+
+⸻
+
+5. Plan Changes: Upgrade / Downgrade
+
+Allow organisation owners to upgrade or downgrade plans.
+
+5.1 Endpoint for plan change
+
+Create an endpoint like:
+	•	POST /api/organizations/:organizationId/change-plan
+
+Body:
+
+{
+  "planCode": "BUSINESS_SOLO" | "BUSINESS_PRO" | "BUSINESS_ENTERPRISE"
+}
+
+Logic:
+	1.	Authenticate user and ensure:
+	•	They are owner or admin for organizationId.
+	2.	Look up the target plan in subscription_plans by code.
+	3.	If this is a downgrade (e.g. Pro → Solo):
+	•	Check:
+	•	Current member count vs targetPlan.maxUsers (if not null).
+	•	If currentMembers > targetPlan.maxUsers:
+	•	Reject with clear error:
+“You currently have 3 team members. Business 1 (Solo) allows only 1 user. Please remove extra members before downgrading.”
+	•	Optionally, you may also check receipts, but usually member-count is the main blocker.
+	4.	If this is an upgrade (Solo → Pro, or any → Enterprise):
+	•	Simply update:
+	•	organizations.planId = targetPlan.id
+	•	And optionally create/update organization_subscriptions if Stripe is integrated.
+	5.	Return updated organisation:
+
+{
+  "organization": {
+    "id": "...",
+    "name": "...",
+    "planCode": "BUSINESS_PRO",
+    "planName": "Business Team (Pro)"
+  }
+}
+
+5.2 Frontend behaviour
+	•	In the business settings / billing page:
+	•	Show current plan and usage:
+	•	Number of users vs plan maximum.
+	•	Number of receipts this month vs plan maximum.
+	•	Provide buttons for:
+	•	“Upgrade to Business Team (Pro)”
+	•	“Upgrade to Enterprise (Talk to us / custom).”
+	•	Downgrade options where allowed.
+	•	When backend returns a recommendation from checkPlanLimit, show:
+	•	A non-blocking banner or modal suggesting plan change, with CTA that calls /change-plan.
+
+⸻
+
+6. Organisation Creation & Membership (Solo, Pro, Enterprise)
+
+6.1 Creating an organisation at upgrade
+
+When a personal user upgrades to any business plan:
+	1.	Create organizations row:
+	•	name = business name.
+	•	ownerUserId = current user.
+	•	planId = chosen plan (BUSINESS_SOLO, BUSINESS_PRO, or BUSINESS_ENTERPRISE).
+	•	billingEmail = user’s email or given billing email.
+	2.	Add organization_members row:
+	•	userId = owner.
+	•	role = owner.
+	3.	Set users.activeOrganizationId to this org.
+
+This applies equally to Solo, Pro, and Enterprise.
+
+⸻
+
+7. Organisation-Level VAT & Expenditure Reports
+
+Keep as previously described:
+	•	Detail report endpoint:
+	•	GET /api/reports/organization/:organizationId/detail?startDate&endDate
+	•	Returns per-receipt breakdown with:
+	•	Date, merchant, total, VAT, category, captured_by.
+	•	Summary report endpoint:
+	•	GET /api/reports/organization/:organizationId/summary?startDate&endDate
+	•	Returns:
+	•	summaryByMonth
+	•	summaryByCategory
+	•	summaryByMerchant
+
+All queries filter by:
+	•	p.organization_id = :organizationId
+	•	p.context = 'business'
+	•	p.date between :startDate and :endDate
+
+This gives one consolidated VAT/expenditure report per organisation, regardless of who captured the receipts.
+
+⸻
+
+8. Personal vs Business Behaviour
+	•	Personal mode:
+	•	purchases.organization_id = NULL
+	•	purchases.context = 'personal'
+	•	Existing reports and behaviour unchanged.
+	•	Business mode (all plans):
+	•	purchases.organization_id = orgId
+	•	purchases.context = 'business'
+	•	Reporting and limits operate at organisation level.
+
+⸻
+
+9. Testing Checklist
+
+After implementing all of the above, verify:
+	1.	Solo (Business 1)
+	•	Organisation created with plan Solo.
+	•	Only 1 member allowed; second member invite is blocked with recommendation to upgrade to Pro.
+	•	Up to 1 000 receipts/month; 1 001st receipt attempt is blocked with recommendation.
+	2.	Pro (Business Team)
+	•	Organisation created/changed to plan Pro.
+	•	Up to 10 members; 11th invite is blocked with recommendation to upgrade to Enterprise.
+	•	Up to 5 000 receipts/month; next receipt is blocked with recommendation.
+	3.	Enterprise
+	•	Plan code BUSINESS_ENTERPRISE has maxUsers = NULL, maxReceiptsPerMonth = NULL.
+	•	checkPlanLimit always returns ok: true for members/receipts (unless you decide to implement soft monitoring).
+	•	Changing to Enterprise from Pro is allowed.
+	4.	Plan change
+	•	Upgrading Solo → Pro works; Pro → Enterprise works.
+	•	Downgrading Pro → Solo is blocked if members > 1.
+	•	Downgrading Enterprise → Pro or Solo respects the maxUsers limit.
+	5.	Reports
+	•	Organisation-level reports include receipts from all members under that organisation.
+	•	Personal reports are unaffected.
+	6.	TypeScript & Drizzle
+	•	All schemas compile.
+	•	Migrations run cleanly.
+	•	API handlers type-check and app starts without errors.
+
+Now implement these changes: update Drizzle schemas and migrations, create checkPlanLimit and plan-change endpoints, and wire these into membership and receipt upload flows so that Solo, Pro, and Enterprise limits are enforced, upgrade recommendations are suggested, and users can upgrade/downgrade plans safely.
+

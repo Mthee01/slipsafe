@@ -5,10 +5,45 @@ import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle }
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { apiRequest } from "@/lib/queryClient";
-import { Check, Crown, Users, Building2, Sparkles, ArrowRight, ExternalLink, Loader2, ShieldCheck } from "lucide-react";
+import { 
+  Check, 
+  Crown, 
+  Users, 
+  Building2, 
+  Sparkles, 
+  ArrowRight, 
+  ExternalLink, 
+  Loader2, 
+  ShieldCheck,
+  Home,
+  PlayCircle,
+  Briefcase,
+  Store,
+  Tag,
+  HelpCircle,
+  LayoutDashboard,
+  LogOut
+} from "lucide-react";
+import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
 type PlanId = "solo-monthly" | "solo-annual" | "pro-monthly" | "pro-annual";
 type PlanType = "free" | "business_solo" | "business_pro" | "enterprise" | null;
@@ -21,10 +56,132 @@ interface SubscriptionData {
 
 const TERMS_VERSION = "v1.0";
 
-export default function Pricing() {
+interface PricingSidebarProps {
+  isAuthenticated: boolean;
+  user: {
+    fullName?: string;
+    businessName?: string | null;
+    activeContext?: string;
+    accountType?: string;
+  } | null;
+  onLogout: () => void;
+}
+
+function PricingSidebar({ isAuthenticated, user, onLogout }: PricingSidebarProps) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  
+  const closeMobileSidebar = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
+
+  const navItems = [
+    { icon: Home, label: "Home", href: "/" },
+    { icon: PlayCircle, label: "How it works", href: "/" },
+    { icon: Users, label: "For Individuals", href: "/" },
+    { icon: Briefcase, label: "For Businesses", href: "/" },
+    { icon: Store, label: "For Retailers", href: "/" },
+    { icon: Tag, label: "Pricing", href: "/pricing", active: true },
+    { icon: HelpCircle, label: "Help", href: "/" },
+  ];
+
+  const getDisplayName = () => {
+    if (user?.activeContext === "business" && user?.businessName) {
+      return user.businessName;
+    }
+    return user?.fullName || "User";
+  };
+
+  const getInitials = () => {
+    const name = getDisplayName();
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  };
+
+  return (
+    <Sidebar collapsible="icon" data-testid="pricing-sidebar">
+      <SidebarHeader className="border-b p-4">
+        <div className="flex items-center justify-center">
+          <img src={logo} alt="SlipSafe" className="h-20 w-20 sm:h-24 sm:w-24 object-contain" data-testid="img-sidebar-logo" />
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {navItems.map((item, index) => (
+                <SidebarMenuItem key={index}>
+                  <SidebarMenuButton asChild tooltip={item.label} isActive={item.active}>
+                    <Link href={item.href} onClick={closeMobileSidebar} data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}>
+                      <item.icon className="h-4 w-4" />
+                      <span>{item.label}</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="border-t p-4">
+        {isAuthenticated ? (
+          <>
+            <div className="flex items-center gap-3 mb-3 px-2 group-data-[collapsible=icon]:justify-center">
+              <Avatar className="h-8 w-8">
+                <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                  {getInitials()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="group-data-[collapsible=icon]:hidden">
+                <p className="text-sm font-medium" data-testid="text-user-name">{getDisplayName()}</p>
+                <p className="text-xs text-muted-foreground">
+                  {user?.activeContext === "business" ? "Business" : "Personal"}
+                </p>
+              </div>
+            </div>
+            <Link href="/" onClick={closeMobileSidebar}>
+              <Button className="w-full justify-start gap-2" data-testid="button-sidebar-dashboard">
+                <LayoutDashboard className="h-4 w-4" />
+                <span className="group-data-[collapsible=icon]:hidden">Go to Dashboard</span>
+              </Button>
+            </Link>
+            <Button 
+              variant="ghost" 
+              className="w-full justify-start gap-2" 
+              onClick={() => { closeMobileSidebar(); onLogout(); }}
+              data-testid="button-sidebar-logout"
+            >
+              <LogOut className="h-4 w-4" />
+              <span className="group-data-[collapsible=icon]:hidden">Sign Out</span>
+            </Button>
+          </>
+        ) : (
+          <>
+            <Link href="/login" onClick={closeMobileSidebar}>
+              <Button variant="ghost" className="w-full justify-start gap-2" data-testid="button-sidebar-sign-in">
+                <Users className="h-4 w-4" />
+                <span className="group-data-[collapsible=icon]:hidden">Sign In</span>
+              </Button>
+            </Link>
+            <Link href="/register" onClick={closeMobileSidebar}>
+              <Button className="w-full justify-start gap-2" data-testid="button-sidebar-get-started">
+                <ArrowRight className="h-4 w-4" />
+                <span className="group-data-[collapsible=icon]:hidden">Get Started Free</span>
+              </Button>
+            </Link>
+          </>
+        )}
+      </SidebarFooter>
+    </Sidebar>
+  );
+}
+
+function PricingContent() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
-  const { user, isLoading: authLoading } = useAuth();
+  const { user } = useAuth();
   const [termsAccepted, setTermsAccepted] = useState(false);
   const [selectedPlan, setSelectedPlan] = useState<PlanId | null>(null);
 
@@ -97,7 +254,6 @@ export default function Pricing() {
     checkoutMutation.mutate({ planId, termsAccepted });
   };
 
-  const isSubscribed = subscription?.planType && subscription.planType !== "free";
   const currentPlan = subscription?.planType;
 
   const plans = [
@@ -378,5 +534,65 @@ export default function Pricing() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function Pricing() {
+  const { user, isAuthenticated, logout } = useAuth();
+  
+  const sidebarStyle = {
+    "--sidebar-width": "16rem",
+    "--sidebar-width-icon": "3.5rem",
+  } as React.CSSProperties;
+
+  const getDisplayName = () => {
+    if (user?.activeContext === "business" && user?.businessName) {
+      return user.businessName;
+    }
+    return user?.fullName || "User";
+  };
+
+  const getInitials = () => {
+    const name = getDisplayName();
+    return name.split(' ').map(n => n[0]).join('').toUpperCase().slice(0, 2);
+  };
+
+  return (
+    <SidebarProvider style={sidebarStyle}>
+      <div className="flex min-h-screen w-full" data-testid="page-pricing">
+        <PricingSidebar 
+          isAuthenticated={isAuthenticated} 
+          user={user || null} 
+          onLogout={logout}
+        />
+        <SidebarInset className="flex flex-col">
+          <header className="sticky top-0 z-40 flex h-auto items-center border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 py-3">
+            <div className="flex items-center gap-3 md:hidden">
+              <SidebarTrigger data-testid="button-mobile-menu" />
+            </div>
+            
+            <div className={`flex items-center justify-center md:hidden ${isAuthenticated ? '' : 'flex-1 -ml-8'}`}>
+              <img src={logo} alt="SlipSafe" className="h-20 w-20 sm:h-24 sm:w-24 object-contain" data-testid="img-header-logo" />
+            </div>
+            
+            {isAuthenticated && (
+              <div className="flex items-center gap-3 ml-auto" data-testid="header-user-info">
+                <span className="text-sm hidden sm:block">
+                  Hi, <span className="font-medium">{getDisplayName()}</span>
+                </span>
+                <Avatar className="h-8 w-8">
+                  <AvatarFallback className="bg-primary text-primary-foreground text-xs">
+                    {getInitials()}
+                  </AvatarFallback>
+                </Avatar>
+              </div>
+            )}
+          </header>
+          <div className="flex-1 overflow-auto">
+            <PricingContent />
+          </div>
+        </SidebarInset>
+      </div>
+    </SidebarProvider>
   );
 }

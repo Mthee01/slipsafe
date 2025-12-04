@@ -28,6 +28,7 @@ export const users = pgTable("users", {
   profilePicture: text("profile_picture"),
   accountType: text("account_type").notNull().default("individual"),
   activeContext: text("active_context").notNull().default("personal"),
+  activeOrganizationId: varchar("active_organization_id"),
   role: text("role").notNull().default("user"),
   merchantId: varchar("merchant_id"),
   stripeCustomerId: text("stripe_customer_id"),
@@ -213,6 +214,7 @@ export type PolicySource = typeof POLICY_SOURCES[number];
 export const purchases = pgTable("purchases", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   userId: varchar("user_id").notNull(),
+  organizationId: varchar("organization_id"),
   hash: text("hash").notNull(),
   merchant: text("merchant").notNull(),
   date: text("date").notNull(),
@@ -637,6 +639,176 @@ export const insertFraudEventSchema = createInsertSchema(fraudEvents).omit({
 
 export type InsertFraudEvent = z.infer<typeof insertFraudEventSchema>;
 export type FraudEvent = typeof fraudEvents.$inferSelect;
+
+// ============================================
+// ORGANIZATION / TEAM MANAGEMENT
+// ============================================
+
+export const ORG_MEMBER_ROLES = ["owner", "admin", "member"] as const;
+export type OrgMemberRole = typeof ORG_MEMBER_ROLES[number];
+
+export const BILLING_STATUSES = ["active", "past_due", "canceled", "trialing"] as const;
+export type BillingStatus = typeof BILLING_STATUSES[number];
+
+export const PLAN_CODES = ["BUSINESS_SOLO", "BUSINESS_PRO", "BUSINESS_ENTERPRISE"] as const;
+export type PlanCode = typeof PLAN_CODES[number];
+
+// Subscription plan definitions with limits
+export const subscriptionPlans = pgTable("subscription_plans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 100 }).notNull(),
+  code: varchar("code", { length: 50 }).notNull().unique(),
+  maxUsers: integer("max_users"),
+  maxReceiptsPerMonth: integer("max_receipts_per_month"),
+  priceMonthly: integer("price_monthly"),
+  priceAnnual: integer("price_annual"),
+  description: text("description"),
+  features: text("features"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertSubscriptionPlanSchema = createInsertSchema(subscriptionPlans).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertSubscriptionPlan = z.infer<typeof insertSubscriptionPlanSchema>;
+export type SubscriptionPlan = typeof subscriptionPlans.$inferSelect;
+
+// Organizations (business accounts with multiple team members)
+export const organizations = pgTable("organizations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: varchar("name", { length: 255 }).notNull(),
+  ownerUserId: varchar("owner_user_id").notNull(),
+  planId: varchar("plan_id"),
+  planCode: varchar("plan_code", { length: 50 }).notNull().default("BUSINESS_SOLO"),
+  vatNumber: varchar("vat_number", { length: 50 }),
+  taxId: varchar("tax_id", { length: 50 }),
+  registrationNumber: varchar("registration_number", { length: 50 }),
+  billingEmail: varchar("billing_email", { length: 255 }).notNull(),
+  billingStatus: varchar("billing_status", { length: 20 }).notNull().default("active"),
+  stripeCustomerId: varchar("stripe_customer_id", { length: 100 }),
+  stripeSubscriptionId: varchar("stripe_subscription_id", { length: 100 }),
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  address: text("address"),
+  phone: varchar("phone", { length: 50 }),
+  logoUrl: text("logo_url"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertOrganizationSchema = createInsertSchema(organizations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+}).extend({
+  name: z.string().min(1, "Organization name is required"),
+  billingEmail: z.string().email("Valid billing email is required"),
+});
+
+export const updateOrganizationSchema = createInsertSchema(organizations).omit({
+  id: true,
+  ownerUserId: true,
+  createdAt: true,
+  updatedAt: true,
+}).partial();
+
+export type InsertOrganization = z.infer<typeof insertOrganizationSchema>;
+export type UpdateOrganization = z.infer<typeof updateOrganizationSchema>;
+export type Organization = typeof organizations.$inferSelect;
+
+// Organization members (links users to organizations with roles)
+export const organizationMembers = pgTable("organization_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull(),
+  userId: varchar("user_id").notNull(),
+  role: varchar("role", { length: 20 }).notNull().default("member"),
+  invitedBy: varchar("invited_by"),
+  invitedAt: timestamp("invited_at").defaultNow().notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  isActive: boolean("is_active").notNull().default(true),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (table) => ({
+  orgUserUnique: unique().on(table.organizationId, table.userId),
+}));
+
+export const insertOrganizationMemberSchema = createInsertSchema(organizationMembers).omit({
+  id: true,
+  invitedAt: true,
+  acceptedAt: true,
+  createdAt: true,
+});
+
+export const inviteMemberSchema = z.object({
+  email: z.string().email("Valid email is required"),
+  role: z.enum(ORG_MEMBER_ROLES).default("member"),
+});
+
+export type InsertOrganizationMember = z.infer<typeof insertOrganizationMemberSchema>;
+export type InviteMember = z.infer<typeof inviteMemberSchema>;
+export type OrganizationMember = typeof organizationMembers.$inferSelect;
+
+// Organization invitations (for pending invites)
+export const organizationInvitations = pgTable("organization_invitations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  organizationId: varchar("organization_id").notNull(),
+  email: varchar("email", { length: 255 }).notNull(),
+  role: varchar("role", { length: 20 }).notNull().default("member"),
+  token: varchar("token", { length: 100 }).notNull().unique(),
+  invitedBy: varchar("invited_by").notNull(),
+  expiresAt: timestamp("expires_at").notNull(),
+  acceptedAt: timestamp("accepted_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertOrganizationInvitationSchema = createInsertSchema(organizationInvitations).omit({
+  id: true,
+  token: true,
+  expiresAt: true,
+  acceptedAt: true,
+  createdAt: true,
+});
+
+export type InsertOrganizationInvitation = z.infer<typeof insertOrganizationInvitationSchema>;
+export type OrganizationInvitation = typeof organizationInvitations.$inferSelect;
+
+// Plan change request schema
+export const changePlanSchema = z.object({
+  planCode: z.enum(PLAN_CODES),
+});
+
+export type ChangePlanRequest = z.infer<typeof changePlanSchema>;
+
+// Plan limit check types
+export const PLAN_LIMIT_TYPES = ["members", "receipts"] as const;
+export type PlanLimitType = typeof PLAN_LIMIT_TYPES[number];
+
+export interface PlanLimitResult {
+  ok: boolean;
+  reason?: "max_users_reached" | "max_receipts_reached";
+  message?: string;
+  currentCount?: number;
+  maxAllowed?: number | null;
+  recommendation?: {
+    recommendedPlanCode: PlanCode;
+    recommendedPlanName: string;
+    reason: string;
+  };
+}
+
+// Helper to get plan limits by code
+export function getPlanLimitsByCode(planCode: PlanCode): { maxUsers: number | null; maxReceiptsPerMonth: number | null; name: string } {
+  switch (planCode) {
+    case "BUSINESS_SOLO":
+      return { maxUsers: 1, maxReceiptsPerMonth: 1000, name: "Business 1 (Solo)" };
+    case "BUSINESS_PRO":
+      return { maxUsers: 10, maxReceiptsPerMonth: 5000, name: "Business Team (Pro)" };
+    case "BUSINESS_ENTERPRISE":
+      return { maxUsers: null, maxReceiptsPerMonth: null, name: "Enterprise" };
+  }
+}
 
 // Billing schemas
 export const PLAN_IDS = ["solo-monthly", "solo-annual", "pro-monthly", "pro-annual"] as const;

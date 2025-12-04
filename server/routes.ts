@@ -17,6 +17,8 @@ import { readFile } from "fs/promises";
 import path from "path";
 import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail } from "./lib/email";
 import { registerBillingRoutes } from "./billing";
+import { registerOrganizationRoutes } from "./organization-routes";
+import { canAddReceipt } from "./lib/planLimits";
 
 async function logUserActivity(
   userId: string, 
@@ -1112,6 +1114,21 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       const context = user.activeContext || "personal";
 
+      // Check plan limits for business context receipts
+      let organizationId: string | null = null;
+      if (context === "business" && user.activeOrganizationId) {
+        organizationId = user.activeOrganizationId;
+        const limitCheck = await canAddReceipt(organizationId);
+        if (!limitCheck.ok) {
+          return res.status(403).json({ 
+            error: "Plan limit reached",
+            message: limitCheck.message,
+            upgradeRequired: true,
+            recommendation: limitCheck.recommendation
+          });
+        }
+      }
+
       // Retrieve preview data from server-side cache
       const previewData = ocrPreviewCache.get(userId);
       if (!previewData) {
@@ -1190,6 +1207,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         ocrConfidence: confidenceStr,
         sourceType: previewData.sourceType || "upload",
         context,
+        organizationId,
         // Policy fields
         returnPolicyDays: policies.returnPolicyDays ?? null,
         returnPolicyTerms: policies.returnPolicyTerms ?? null,
@@ -1882,7 +1900,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const context = user.activeContext;
       const { startDate, endDate } = req.query;
       
-      const purchases = await storage.getPurchasesByContext(userId, context);
+      // For business context with an organization, get all organization receipts
+      let purchases;
+      if (context === "business" && user.activeOrganizationId) {
+        purchases = await storage.getPurchasesByOrganization(user.activeOrganizationId, "business");
+      } else {
+        purchases = await storage.getPurchasesByContext(userId, context);
+      }
       
       // Filter by date range if provided
       let filteredPurchases = purchases;
@@ -2001,7 +2025,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const context = user.activeContext;
       const { startDate, endDate, includeTransactions } = req.query;
       
-      const purchases = await storage.getPurchasesByContext(userId, context);
+      // For business context with an organization, get all organization receipts
+      let purchases;
+      if (context === "business" && user.activeOrganizationId) {
+        purchases = await storage.getPurchasesByOrganization(user.activeOrganizationId, "business");
+      } else {
+        purchases = await storage.getPurchasesByContext(userId, context);
+      }
       
       // Filter by date range if provided
       let filteredPurchases = purchases;
@@ -3539,6 +3569,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   registerBillingRoutes(app);
+  registerOrganizationRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

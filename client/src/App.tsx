@@ -13,9 +13,11 @@ import { InstallPrompt } from "@/components/install-prompt";
 import { CrispChat } from "@/components/crisp-chat";
 import { useAuth } from "@/hooks/use-auth";
 import { useWarrantyNotifications } from "@/hooks/use-warranty-notifications";
+import { useIsMobile } from "@/hooks/use-mobile";
 import { Button } from "@/components/ui/button";
-import { LogOut } from "lucide-react";
+import { LogOut, Home as HomeIcon } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Link } from "wouter";
 import Home from "@/pages/home";
 import Receipts from "@/pages/receipts";
 import Claims from "@/pages/claims";
@@ -40,11 +42,13 @@ import BusinessTerms from "@/pages/business-terms";
 import LandingPage from "@/pages/landing";
 import Terms from "@/pages/terms";
 import Privacy from "@/pages/privacy";
+import Team from "@/pages/team";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
 function AppHeader() {
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const isMobile = useIsMobile();
   
   const logoutMutation = useMutation({
     mutationFn: async () => {
@@ -82,6 +86,18 @@ function AppHeader() {
         </div>
       </div>
       <div className="flex items-center gap-2">
+        {isMobile && (
+          <Link href="/landing">
+            <Button
+              variant="ghost"
+              size="icon"
+              data-testid="button-home"
+              title="Home"
+            >
+              <HomeIcon className="h-4 w-4" />
+            </Button>
+          </Link>
+        )}
         <AlertsWidget />
         <Button
           variant="ghost"
@@ -154,6 +170,7 @@ function AppContent() {
                   <Route path="/reports" component={Reports} />
                   <Route path="/settings" component={Settings} />
                   <Route path="/profile" component={Profile} />
+                  <Route path="/team" component={Team} />
                   <Route path="/upgrade-to-business" component={UpgradeToBusiness} />
                   <Route path="/admin" component={AdminDashboard} />
                   <Route path="/merchant" component={MerchantPortal} />

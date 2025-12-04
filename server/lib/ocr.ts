@@ -451,7 +451,7 @@ export const OCR_ERRORS: Record<OCRErrorType, Omit<OCRError, 'type'>> = {
 interface PolicyInfo {
   returnPolicyDays: number | null;
   returnPolicyTerms: string | null;
-  refundType: 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
+  refundType: 'not_specified' | 'full' | 'store_credit' | 'exchange_only' | 'partial' | 'none' | null;
   exchangePolicyDays: number | null;
   exchangePolicyTerms: string | null;
   warrantyMonths: number | null;

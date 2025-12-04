@@ -5,8 +5,8 @@ let connectionSettings: any;
 async function getCredentials() {
   // First, try to use direct API key from environment variable
   if (process.env.RESEND_API_KEY) {
-    const fromEmail =
-      process.env.RESEND_FROM_EMAIL || "SlipSafe <no-reply@slip-safe.net>";
+    const rawFromEmail = process.env.RESEND_FROM_EMAIL || "no-reply@slip-safe.net";
+    const fromEmail = rawFromEmail.includes("<") ? rawFromEmail : `SlipSafe <${rawFromEmail}>`;
     console.log(
       `[Email] Using API key from environment, from email: ${fromEmail}`,
     );
@@ -47,9 +47,12 @@ async function getCredentials() {
       "Resend not connected. Please set RESEND_API_KEY environment variable.",
     );
   }
+  const defaultFromEmail = "no-reply@slip-safe.net";
+  const rawFromEmail = connectionSettings.settings.from_email || defaultFromEmail;
+  const fromEmail = rawFromEmail.includes("<") ? rawFromEmail : `SlipSafe <${rawFromEmail}>`;
   return {
     apiKey: connectionSettings.settings.api_key,
-    fromEmail: connectionSettings.settings.from_email || fromEmail,
+    fromEmail,
   };
 }
 
@@ -73,7 +76,7 @@ export async function sendEmail(
     console.log(`[Email] Subject: ${subject}`);
 
     const result = await client.emails.send({
-      from: `SlipSafe <${fromEmail}>`,
+      from: fromEmail,
       to: [to],
       subject,
       html,

@@ -1,0 +1,329 @@
+You are an expert TypeScript/Node/React engineer and QA automation specialist working on an existing Replit project called **SlipSafe**.
+
+## 0. Context (read carefully)
+
+- Stack:
+  - Backend: Node + Express, TypeScript, PostgreSQL (Neon), Drizzle ORM.
+  - Frontend: React + TypeScript, Vite, Tailwind, TanStack Query.
+- The **organisational management** and **plan management** features have already been implemented as per previous instructions and include:
+  - Tables (or Drizzle schemas) for:
+    - `subscription_plans` (BUSINESS_SOLO, BUSINESS_PRO, BUSINESS_ENTERPRISE).
+    - `organizations` (business accounts).
+    - `organization_members` (users linked to orgs with roles).
+    - `purchases` with `organization_id` and `context` (`personal`/`business`).
+  - A util function like `checkPlanLimit(organizationId, type, options?)` that:
+    - Enforces `maxUsers` and `maxReceiptsPerMonth` for Solo/Pro.
+    - Returns upgrade recommendations (Solo → Pro, Pro → Enterprise).
+  - REST endpoints (or equivalent) for:
+    - Creating/upgrading organisations (Solo / Pro / Enterprise).
+    - Adding/inviting members to an organisation.
+    - Confirming/saving receipts (`context='personal'` or `context='business'`, with `organizationId` for business).
+    - Generating **organisation-level reports**:
+      - Detail: `/api/reports/organization/:orgId/detail?startDate&endDate`
+      - Summary: `/api/reports/organization/:orgId/summary?startDate&endDate`
+    - Changing plans: `/api/organizations/:orgId/change-plan` with `planCode`.
+
+If anything is missing, you may create minimal versions to support testing, but the main focus of this prompt is: **build a comprehensive automated test suite for organisational management and reporting**.
+
+---
+
+## 1. Goal
+
+Create a **comprehensive, automated test suite** that validates:
+
+1. Creation and configuration of organisations (Solo, Pro, Enterprise).
+2. Membership management:
+   - Adding/removing members.
+   - Enforcing plan user limits.
+   - Permissions (owner/admin vs member vs non-member).
+3. Receipt handling for organisations:
+   - Business vs personal receipts.
+   - Multi-user input for one organisation.
+   - Enforcement of monthly receipt limits per plan.
+4. Plan management:
+   - Upgrades/downgrades (Solo ↔ Pro ↔ Enterprise).
+   - Blocking invalid downgrades (e.g. too many members).
+   - Upgrade recommendations when limits are reached.
+5. Organisation-level reporting:
+   - Consolidated **detail** reports across multiple users.
+   - **Summary** reports by month, category, and merchant.
+6. Any critical edge cases that could break data integrity or misreport totals.
+
+Use **Jest** (or Vitest, if that is already in the project) + **supertest** (or equivalent) for backend integration tests. Focus the tests on the backend API + DB behaviour.
+
+---
+
+## 2. Test Infrastructure
+
+1. If not already present:
+   - Install testing dependencies:
+     - Jest, ts-jest, supertest, @types/jest, @types/supertest.
+   - Configure:
+     - `jest.config.ts` or `jest.config.cjs` for a TypeScript Node project.
+     - A `test` script in `package.json`, e.g.:
+
+       ```json
+       "scripts": {
+         "test": "jest --runInBand --detectOpenHandles"
+       }
+       ```
+
+2. Set up a **test database**:
+   - Use a separate `DATABASE_URL_TEST` so we don’t touch production/dev data.
+   - Before each test run:
+     - Run migrations or use Drizzle to create schema.
+   - Before each test (or test suite):
+     - Truncate or clean relevant tables.
+   - Implement a simple helper, e.g. `testDbSetup.ts`, to:
+     - Connect to test DB.
+     - Reset state between tests.
+
+3. Use **seed helper functions** in tests to create:
+   - Users.
+   - Organizations with specific plans.
+   - Members.
+   - Purchases (business + personal).
+
+---
+
+## 3. Test Data Fixtures
+
+Implement test helpers (e.g. in `tests/helpers/fixtures.ts`) that can create:
+
+- Users:
+  - `createUser({ email, fullName }) -> user`
+- Organisations:
+  - `createOrganization({ name, ownerUserId, planCode }) -> org`
+- Members:
+  - `addMember({ orgId, userId, role }) -> orgMember`
+- Purchases:
+  - `createPurchase({ orgId?, userId, context, date, merchant, category, total, vatAmount })`
+
+Create constants for plans:
+
+- SOLO: `BUSINESS_SOLO`
+- PRO: `BUSINESS_PRO`
+- ENT: `BUSINESS_ENTERPRISE`
+
+Use explicit test IDs or readable names where helpful.
+
+---
+
+## 4. Test Suites to Implement
+
+Create a folder `tests/organizations` and break tests into multiple files:
+
+### 4.1 `tests/organizations/organizationCreation.test.ts`
+
+**Scenarios:**
+
+1. **Create Solo organisation**
+   - Given a personal user `U1` upgrades to Business 1 (Solo).
+   - Assert:
+     - 1 row in `organizations` with `planCode=BUSINESS_SOLO`.
+     - 1 row in `organization_members` with `role='owner'`.
+     - `users.activeOrganizationId` is set.
+
+2. **Create Pro organisation**
+   - Similar to Solo but `planCode=BUSINESS_PRO`.
+
+3. **Create Enterprise organisation**
+   - `planCode=BUSINESS_ENTERPRISE`.
+   - `maxUsers` and `maxReceipts` from plan are NULL or treated as unlimited in tests of `checkPlanLimit`.
+
+---
+
+### 4.2 `tests/organizations/membershipLimits.test.ts`
+
+**Scenarios:**
+
+1. **Add members within Pro limit**
+   - Create `ORG_PRO` with owner `U2`.
+   - Add 2 additional members via the API.
+   - Assert:
+     - `organization_members` has 3 rows for that org.
+     - No errors.
+
+2. **Cannot exceed Pro maxUsers (11th member)**
+   - Seed `ORG_PRO` with 10 members.
+   - Call `POST /api/organizations/:orgId/invite-member` for an 11th.
+   - Expect:
+     - HTTP 400/409.
+     - Response contains `reason = 'max_users_reached'`.
+     - `recommendation` suggests `BUSINESS_ENTERPRISE`.
+     - DB member count remains 10.
+
+3. **Solo organisation cannot add a second member**
+   - `ORG_SOLO` with plan SOLO, owner `U1`.
+   - Try to add `U2` as member.
+   - Expect:
+     - Limit error with recommendation to upgrade to PRO.
+
+4. **Non-owner cannot add member**
+   - `ORG_PRO` with `U2` owner, `U3` member.
+   - As `U3`, call invite endpoint.
+   - Expect 403 and no change.
+
+---
+
+### 4.3 `tests/organizations/receiptLimits.test.ts`
+
+**Scenarios:**
+
+1. **Solo business receipts under limit**
+   - `ORG_SOLO`, `U1` owner.
+   - Insert 999 business receipts via helper.
+   - Upload 1 more via API.
+   - Expect:
+     - `checkPlanLimit('receipts')` returns `ok: true`.
+     - 1000th receipt saved.
+
+2. **Solo business receipts hit limit**
+   - `ORG_SOLO` with 1000 receipts in current month.
+   - Attempt to upload 1001st.
+   - Expect:
+     - HTTP 400/409.
+     - `reason = 'max_receipts_reached'`.
+     - Recommendation: `BUSINESS_PRO`.
+     - Still 1000 receipts in DB.
+
+3. **Pro business receipts distributed across staff**
+   - `ORG_PRO` with `U2`, `U3`, `U4`.
+   - Each uploads some receipts (via API).
+   - Ensure:
+     - All receipts have `organization_id = ORG_PRO` and `context='business'`.
+     - Count matches sum of all uploads.
+     - No duplicate or missing `organization_id`.
+
+4. **Personal receipts never have organization_id**
+   - As `U1`, upload receipts in **personal** context.
+   - Assert:
+     - `context='personal'`.
+     - `organization_id IS NULL`.
+
+---
+
+### 4.4 `tests/organizations/planChange.test.ts`
+
+**Scenarios:**
+
+1. **Upgrade Solo → Pro**
+   - `ORG_SOLO` with owner `U1`.
+   - Call `POST /api/organizations/:orgId/change-plan` with `planCode='BUSINESS_PRO'`.
+   - Expect:
+     - 200 OK.
+     - `organizations.planId` changed to PRO.
+     - No data loss in members/receipts.
+
+2. **Downgrade Pro → Solo blocked by members**
+   - `ORG_PRO` with 3 members.
+   - Attempt to downgrade to SOLO.
+   - Expect:
+     - 400/409 with message “too many members”.
+     - `planId` remains PRO.
+
+3. **Downgrade Pro → Solo allowed with 1 member**
+   - `ORG_PRO` with just owner.
+   - Downgrade to SOLO.
+   - Expect:
+     - `planId` updated to SOLO.
+     - Receipts & reports still correct.
+
+4. **Upgrade Pro → Enterprise**
+   - `ORG_PRO` → `BUSINESS_ENTERPRISE`.
+   - After upgrade:
+     - `checkPlanLimit('members')` and `checkPlanLimit('receipts')` never block.
+   - Try adding >10 users and a lot of receipts to verify no artificial limit.
+
+---
+
+### 4.5 `tests/organizations/reporting.test.ts`
+
+Focus on **consolidation and reporting correctness**.
+
+**Scenarios:**
+
+1. **Multi-user receipts, single consolidated detail report**
+   - `ORG_PRO` with `U2`, `U3`, `U4`.
+   - Insert 5 receipts across all three users with known values (different merchants/categories).
+   - Call:
+     - `GET /api/reports/organization/:orgId/detail?startDate=YYYY-MM-DD&endDate=YYYY-MM-DD`
+   - Expect:
+     - HTTP 200.
+     - JSON length matches 5.
+     - Each receipt line shows correct merchant, totals, and `captured_by` user.
+     - Organisation ID is consistent.
+
+2. **Summary by month/category/merchant is correct**
+   - Using same data, call summary endpoint:
+     - `GET /api/reports/organization/:orgId/summary?...`
+   - Expect:
+     - `summaryByMonth` has correct aggregations.
+     - `summaryByCategory` totals match sums by category.
+     - `summaryByMerchant` totals match sums by merchant.
+   - Assert numeric totals precisely (or within rounding tolerance).
+
+3. **Non-member cannot access org reports**
+   - `U1` not a member of `ORG_PRO`.
+   - Call detail/summary endpoints.
+   - Expect 403 (or 404) and no data returned.
+
+---
+
+### 4.6 `tests/organizations/security.test.ts`
+
+**Scenarios:**
+
+1. **User cannot upload business receipts for org they do not belong to**
+   - `U1` not in `ORG_PRO`.
+   - Attempt to `POST /api/receipts/confirm` with `context='business'` and `organizationId=ORG_PRO`.
+   - Expect:
+     - 403 Forbidden.
+     - No `purchases` row created.
+
+2. **Owner vs member permissions**
+   - Owner can change plan and invite members.
+   - Member cannot.
+   - Verify via API calls and status codes.
+
+---
+
+## 5. Running the Tests
+
+1. Ensure package.json has:
+
+   ```json
+   "scripts": {
+     "test": "jest --runInBand --detectOpenHandles"
+   }
+
+	2.	Ensure test DB config (e.g. .env.test or environment variables) is set appropriately and that migrations can run automatically or via a pre-test hook.
+	3.	Implement a tests/setupTestDb.ts or tests/jest.setup.ts to:
+	•	Run migrations (or Drizzle push) for the test database.
+	•	Clean tables before each test suite.
+	4.	At the end of your changes, verify in Replit shell:
+
+npm test
+
+All test suites should:
+	•	Compile TypeScript successfully.
+	•	Connect to test DB.
+	•	Pass without hanging (no open handles).
+
+⸻
+
+6. Implementation Steps (for you, the AI)
+	1.	Inspect the existing repo structure (backend entrypoint, DB, Drizzle schema, routes).
+	2.	Add/adjust Jest config and test scripts.
+	3.	Create a tests/ directory with the test files described above.
+	4.	Create helper/fixture utilities to seed data.
+	5.	Write the tests with clear names, comments, and strong assertions.
+	6.	Run the test suite and fix any issues (types, imports, or logic errors) until:
+	•	All tests pass.
+	•	No TypeScript errors.
+	7.	Optionally, add a TESTING.md or update README.md explaining:
+	•	How to run tests.
+	•	What the org management tests cover.
+
+Now implement this complete automated test suite for the organisational management feature exactly as described.
+

@@ -37,6 +37,15 @@ Preferred communication style: Simple, everyday language.
 - **Email Verification**: Registration requires email verification before login, with tokens expiring after 24 hours.
 - **Email System**: Integrates with Resend for professional HTML email delivery for verification, welcome, and account recovery.
 - **Context Switching**: Business accounts can toggle between personal and business modes to manage receipts separately.
+- **Organization/Team Management**: Business accounts can create organizations and manage team members.
+  - **Plan Limits**: Three-tier subscription system (Solo: 1 user/1K receipts, Pro: 10 users/5K receipts, Enterprise: custom) enforced via `planLimits.ts`.
+  - **Team Page** (`/team`): Displays members, pending invitations, and usage statistics. Owners/admins can invite members, remove members, and cancel invitations.
+  - **Route Ordering**: CRITICAL - In `server/organization-routes.ts`, all `/api/organizations/current/*` routes MUST be defined BEFORE `/api/organizations/:organizationId` routes to prevent Express from matching "current" as an organizationId parameter. This is a common Express routing pattern issue.
+  - **Security**: All `/api/organizations/current/*` endpoints use `verifyCurrentOrgMembership` helper to prevent stale/forged activeOrganizationId attacks. Role-based access (owner > admin > member) with strict enforcement:
+    - Only owners can remove admins
+    - Only admins/owners can invite members or cancel invitations
+    - All organization data access requires active membership verification
+  - **Multi-tenant Receipts**: Organization receipts are tracked via `organizationId` field on purchases, enabling aggregation for business reports across all team members.
 - **Reports**: Two-tier reporting system:
   - **Personal Users**: Dashboard showing total receipts, total spent, pending returns, active warranties, upcoming deadlines, spending by category, and monthly spending trends.
   - **Business Users**: Comprehensive tax/VAT summaries, expense categorization, monthly trends with visual charts, CSV export, and PDF report generation.

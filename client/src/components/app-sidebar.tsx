@@ -1,4 +1,4 @@
-import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe } from "lucide-react";
+import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe, Users } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -210,6 +210,24 @@ export function AppSidebar() {
                     <Link href="/admin" data-testid="nav-admin" onClick={handleMenuItemClick}>
                       <Shield className="h-4 w-4" />
                       <span>Admin Dashboard</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {isBusiness && isBusinessContext && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Organization</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/team"}>
+                    <Link href="/team" data-testid="nav-team" onClick={handleMenuItemClick}>
+                      <Users className="h-4 w-4" />
+                      <span>Team & Plan</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

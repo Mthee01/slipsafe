@@ -17,6 +17,7 @@ import {
   SidebarMenuItem,
   SidebarProvider,
   SidebarTrigger,
+  useSidebar,
 } from "@/components/ui/sidebar";
 import { useAuth } from "@/hooks/use-auth";
 import { 
@@ -111,6 +112,19 @@ interface LandingSidebarProps {
 }
 
 function LandingSidebar({ isAuthenticated, user, onLogout }: LandingSidebarProps) {
+  const { isMobile, setOpenMobile } = useSidebar();
+  
+  const closeMobileSidebar = () => {
+    if (isMobile) {
+      setOpenMobile(false);
+    }
+  };
+
+  const handleNavAction = (action: () => void) => {
+    action();
+    closeMobileSidebar();
+  };
+
   const navItems = [
     { icon: Home, label: "Home", action: () => window.scrollTo({ top: 0, behavior: 'smooth' }) },
     { icon: PlayCircle, label: "How it works", action: () => scrollToSection('how-it-works') },
@@ -140,9 +154,8 @@ function LandingSidebar({ isAuthenticated, user, onLogout }: LandingSidebarProps
   return (
     <Sidebar collapsible="icon" data-testid="landing-sidebar">
       <SidebarHeader className="border-b p-4">
-        <div className="flex items-center gap-2">
-          <img src={logo} alt="SlipSafe" className="h-8 w-8 object-contain flex-shrink-0" />
-          <span className="text-lg font-semibold group-data-[collapsible=icon]:hidden">SlipSafe</span>
+        <div className="flex items-center justify-center">
+          <img src={logo} alt="SlipSafe" className="h-20 w-20 sm:h-24 sm:w-24 object-contain" data-testid="img-sidebar-logo" />
         </div>
       </SidebarHeader>
 
@@ -154,14 +167,14 @@ function LandingSidebar({ isAuthenticated, user, onLogout }: LandingSidebarProps
                 <SidebarMenuItem key={index}>
                   {item.href ? (
                     <SidebarMenuButton asChild tooltip={item.label}>
-                      <Link href={item.href} data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}>
+                      <Link href={item.href} onClick={closeMobileSidebar} data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}>
                         <item.icon className="h-4 w-4" />
                         <span>{item.label}</span>
                       </Link>
                     </SidebarMenuButton>
                   ) : (
                     <SidebarMenuButton 
-                      onClick={item.action} 
+                      onClick={() => handleNavAction(item.action!)} 
                       tooltip={item.label}
                       data-testid={`nav-${item.label.toLowerCase().replace(/\s+/g, '-')}`}
                     >
@@ -192,7 +205,7 @@ function LandingSidebar({ isAuthenticated, user, onLogout }: LandingSidebarProps
                 </p>
               </div>
             </div>
-            <Link href={getDashboardRoute()}>
+            <Link href={getDashboardRoute()} onClick={closeMobileSidebar}>
               <Button className="w-full justify-start gap-2" data-testid="button-sidebar-dashboard">
                 <LayoutDashboard className="h-4 w-4" />
                 <span className="group-data-[collapsible=icon]:hidden">Go to Dashboard</span>
@@ -201,7 +214,7 @@ function LandingSidebar({ isAuthenticated, user, onLogout }: LandingSidebarProps
             <Button 
               variant="ghost" 
               className="w-full justify-start gap-2" 
-              onClick={onLogout}
+              onClick={() => { closeMobileSidebar(); onLogout(); }}
               data-testid="button-sidebar-logout"
             >
               <LogOut className="h-4 w-4" />
@@ -210,13 +223,13 @@ function LandingSidebar({ isAuthenticated, user, onLogout }: LandingSidebarProps
           </>
         ) : (
           <>
-            <Link href="/login">
+            <Link href="/login" onClick={closeMobileSidebar}>
               <Button variant="ghost" className="w-full justify-start gap-2" data-testid="button-sidebar-sign-in">
                 <Users className="h-4 w-4" />
                 <span className="group-data-[collapsible=icon]:hidden">Sign In</span>
               </Button>
             </Link>
-            <Link href="/register">
+            <Link href="/register" onClick={closeMobileSidebar}>
               <Button className="w-full justify-start gap-2" data-testid="button-sidebar-get-started">
                 <ArrowRight className="h-4 w-4" />
                 <span className="group-data-[collapsible=icon]:hidden">Get Started Free</span>
@@ -235,24 +248,28 @@ interface HeroSectionProps {
 
 function HeroSection({ isAuthenticated }: HeroSectionProps) {
   return (
-    <section className="relative py-16 md:py-24 px-4 overflow-hidden" data-testid="section-hero">
-      <div className="absolute inset-0 bg-gradient-to-br from-primary/5 via-background to-primary/10" />
+    <section className="relative py-8 md:py-24 px-4 overflow-hidden" data-testid="section-hero">
+      <div className="absolute inset-0 bg-gradient-to-br from-indigo-600/20 via-primary/10 to-teal-500/20 md:from-primary/5 md:via-background md:to-primary/10" />
       
       <div className="absolute inset-0 opacity-[0.03]" style={{
         backgroundImage: `url("data:image/svg+xml,%3Csvg width='60' height='60' viewBox='0 0 60 60' xmlns='http://www.w3.org/2000/svg'%3E%3Cg fill='none' fill-rule='evenodd'%3E%3Cg fill='%23000' fill-opacity='1'%3E%3Cpath d='M30 30h10v2H30V30zm0-10h10v2H30V20zm0 20h10v2H30V40zM10 30h10v2H10V30zm0-10h10v2H10V20zm0 20h10v2H10V40z'/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")`,
       }} />
 
+      <div className="absolute top-10 right-4 w-24 h-24 bg-indigo-500/30 rounded-full blur-2xl md:hidden" />
+      <div className="absolute bottom-20 left-4 w-32 h-32 bg-teal-500/25 rounded-full blur-3xl md:hidden" />
+      <div className="absolute top-1/2 right-1/4 w-20 h-20 bg-primary/20 rounded-full blur-xl md:hidden" />
+
       <div className="relative max-w-7xl mx-auto">
-        <div className="grid lg:grid-cols-2 gap-12 items-center">
+        <div className="flex flex-col-reverse lg:grid lg:grid-cols-2 gap-6 lg:gap-12 items-center">
           <motion.div 
-            className="space-y-8"
+            className="space-y-5 md:space-y-8"
             initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.6 }}
           >
-            <div className="space-y-4">
+            <div className="space-y-3 md:space-y-4">
               <motion.h1 
-                className="text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight"
+                className="text-3xl sm:text-4xl md:text-5xl lg:text-6xl font-bold tracking-tight bg-gradient-to-r from-foreground via-foreground to-foreground/80 bg-clip-text"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.1 }}
@@ -261,7 +278,7 @@ function HeroSection({ isAuthenticated }: HeroSectionProps) {
                 Never lose a slip again.
               </motion.h1>
               <motion.p 
-                className="text-lg md:text-xl text-muted-foreground max-w-xl"
+                className="text-base sm:text-lg md:text-xl text-muted-foreground max-w-xl"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.6, delay: 0.2 }}
@@ -272,55 +289,67 @@ function HeroSection({ isAuthenticated }: HeroSectionProps) {
             </div>
 
             <motion.div 
-              className="flex flex-wrap gap-4"
+              className="flex flex-col sm:flex-row gap-3 sm:gap-4"
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.6, delay: 0.3 }}
             >
               {isAuthenticated ? (
                 <Link href="/">
-                  <Button size="lg" className="gap-2 hover:scale-105 hover:shadow-lg transition-all" data-testid="button-hero-dashboard">
+                  <Button size="lg" className="w-full sm:w-auto gap-2 hover:scale-105 hover:shadow-lg transition-all bg-gradient-to-r from-indigo-600 to-primary hover:from-indigo-700 hover:to-primary/90" data-testid="button-hero-dashboard">
                     Go to Dashboard
                     <LayoutDashboard className="h-4 w-4" />
                   </Button>
                 </Link>
               ) : (
                 <Link href="/register">
-                  <Button size="lg" className="gap-2 hover:scale-105 hover:shadow-lg transition-all" data-testid="button-hero-get-started">
+                  <Button size="lg" className="w-full sm:w-auto gap-2 hover:scale-105 hover:shadow-lg transition-all bg-gradient-to-r from-indigo-600 to-primary hover:from-indigo-700 hover:to-primary/90" data-testid="button-hero-get-started">
                     Get Started Free
                     <ArrowRight className="h-4 w-4" />
                   </Button>
                 </Link>
               )}
               <Link href="/pricing">
-                <Button variant="outline" size="lg" className="hover:scale-105 transition-all" data-testid="button-hero-view-plans">
+                <Button variant="outline" size="lg" className="w-full sm:w-auto hover:scale-105 transition-all border-primary/30 hover:border-primary/50 hover:bg-primary/5" data-testid="button-hero-view-plans">
                   View Business Plans
                 </Button>
               </Link>
             </motion.div>
 
             <motion.div 
-              className="flex flex-wrap gap-4 pt-4"
+              className="flex items-center gap-2 text-sm text-muted-foreground"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.4 }}
             >
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Shield className="h-4 w-4 text-primary" />
-                <span>Secure storage</span>
+              <div className="flex items-center justify-center w-5 h-5 rounded-full bg-gradient-to-br from-indigo-500 to-teal-500">
+                <ShieldCheck className="h-3 w-3 text-white" />
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <Clock className="h-4 w-4 text-primary" />
-                <span>Smart deadlines</span>
+              <span>Built for SA shoppers & SMMEs</span>
+            </motion.div>
+
+            <motion.div 
+              className="hidden md:flex flex-wrap gap-2 sm:gap-3 pt-2"
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.6, delay: 0.4 }}
+            >
+              <div className="flex items-center gap-2 text-sm bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 px-3 py-1.5 rounded-full border border-indigo-500/20">
+                <Shield className="h-4 w-4" />
+                <span className="font-medium">Secure storage</span>
               </div>
-              <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                <FileText className="h-4 w-4 text-primary" />
-                <span>VAT exports</span>
+              <div className="flex items-center gap-2 text-sm bg-teal-500/10 text-teal-700 dark:text-teal-300 px-3 py-1.5 rounded-full border border-teal-500/20">
+                <Clock className="h-4 w-4" />
+                <span className="font-medium">Smart deadlines</span>
+              </div>
+              <div className="flex items-center gap-2 text-sm bg-primary/10 text-primary px-3 py-1.5 rounded-full border border-primary/20">
+                <FileText className="h-4 w-4" />
+                <span className="font-medium">VAT exports</span>
               </div>
             </motion.div>
 
             <motion.div 
-              className="pt-4"
+              className="pt-1 md:pt-2"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.5 }}
@@ -332,56 +361,57 @@ function HeroSection({ isAuthenticated }: HeroSectionProps) {
           </motion.div>
 
           <motion.div 
-            className="hidden lg:block relative"
-            initial={{ opacity: 0, scale: 0.9 }}
+            className="relative w-full"
+            initial={{ opacity: 0, scale: 0.95 }}
             animate={{ opacity: 1, scale: 1 }}
-            transition={{ duration: 0.8, delay: 0.3 }}
+            transition={{ duration: 0.8, delay: 0.1 }}
           >
             <div className="relative">
-              <div className="absolute inset-0 bg-gradient-to-r from-background via-transparent to-transparent z-10" />
+              <div className="absolute inset-0 bg-gradient-to-r from-background via-transparent to-transparent z-10 hidden lg:block" />
+              <div className="absolute inset-0 bg-gradient-to-t from-indigo-900/30 via-transparent to-teal-900/20 z-[5] rounded-2xl lg:hidden" />
               <img 
                 src={heroImage} 
                 alt="Diverse group of shoppers using smartphones while shopping"
-                className="rounded-2xl shadow-2xl object-cover w-full h-[480px]"
+                className="rounded-2xl shadow-2xl object-cover w-full h-[200px] sm:h-[280px] lg:h-[480px]"
               />
               
               <motion.div 
-                className="absolute -bottom-6 -left-6 bg-card border rounded-xl p-4 shadow-lg z-20"
+                className="absolute -bottom-3 left-2 sm:-bottom-6 sm:-left-6 bg-card/95 backdrop-blur-sm border rounded-xl p-3 sm:p-4 shadow-lg z-20"
                 initial={{ opacity: 0, y: 20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.7 }}
+                transition={{ duration: 0.6, delay: 0.5 }}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-green-500/10 flex items-center justify-center">
-                    <CheckCircle className="h-5 w-5 text-green-600" />
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-green-500/15 flex items-center justify-center">
+                    <CheckCircle className="h-4 w-4 sm:h-5 sm:w-5 text-green-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium">Return by 15 Jan</p>
-                    <p className="text-xs text-muted-foreground">Woolworths - R245.99</p>
+                    <p className="text-xs sm:text-sm font-medium">Return by 15 Jan</p>
+                    <p className="text-[10px] sm:text-xs text-muted-foreground">Woolworths - R245.99</p>
                   </div>
                 </div>
               </motion.div>
               
               <motion.div 
-                className="absolute -top-4 -right-4 bg-card border rounded-xl p-4 shadow-lg z-20"
+                className="absolute -top-2 right-2 sm:-top-4 sm:-right-4 bg-card/95 backdrop-blur-sm border rounded-xl p-3 sm:p-4 shadow-lg z-20"
                 initial={{ opacity: 0, y: -20 }}
                 animate={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.6, delay: 0.8 }}
+                transition={{ duration: 0.6, delay: 0.6 }}
               >
-                <div className="flex items-center gap-3">
-                  <div className="w-10 h-10 rounded-full bg-blue-500/10 flex items-center justify-center">
-                    <Shield className="h-5 w-5 text-blue-600" />
+                <div className="flex items-center gap-2 sm:gap-3">
+                  <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-full bg-blue-500/15 flex items-center justify-center">
+                    <Shield className="h-4 w-4 sm:h-5 sm:w-5 text-blue-600" />
                   </div>
                   <div>
-                    <p className="text-sm font-medium">Warranty: 2 years</p>
-                    <p className="text-xs text-muted-foreground">Ends 15 Dec 2026</p>
+                    <p className="text-xs sm:text-sm font-medium">Warranty: 2 years</p>
+                    <p className="text-[10px] sm:text-xs text-muted-foreground">Ends 15 Dec 2026</p>
                   </div>
                 </div>
               </motion.div>
             </div>
             
-            <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-primary/20 rounded-full blur-3xl" />
-            <div className="absolute -top-8 -left-8 w-24 h-24 bg-primary/30 rounded-full blur-2xl" />
+            <div className="absolute -bottom-8 -right-8 w-32 h-32 bg-primary/20 rounded-full blur-3xl hidden lg:block" />
+            <div className="absolute -top-8 -left-8 w-24 h-24 bg-primary/30 rounded-full blur-2xl hidden lg:block" />
           </motion.div>
         </div>
       </div>
@@ -560,7 +590,7 @@ function HowItWorksSection() {
   );
 }
 
-function ForIndividualsSection() {
+function ForIndividualsSection({ isAuthenticated }: { isAuthenticated: boolean }) {
   const ref = useRef(null);
   const inView = useInView(ref, { once: true, margin: "-100px" });
 
@@ -608,12 +638,14 @@ function ForIndividualsSection() {
                 </motion.li>
               ))}
             </ul>
-            <Link href="/register">
-              <Button size="lg" className="gap-2 hover:scale-105 transition-all" data-testid="button-individuals-cta">
-                Get Started Free
-                <ArrowRight className="h-4 w-4" />
-              </Button>
-            </Link>
+            {!isAuthenticated && (
+              <Link href="/register">
+                <Button size="lg" className="gap-2 hover:scale-105 transition-all" data-testid="button-individuals-cta">
+                  Get Started Free
+                  <ArrowRight className="h-4 w-4" />
+                </Button>
+              </Link>
+            )}
           </motion.div>
 
           <motion.div 
@@ -1113,17 +1145,17 @@ export default function LandingPage() {
           onLogout={logout}
         />
         <SidebarInset className="flex flex-col">
-          <header className="sticky top-0 z-40 flex h-14 items-center justify-between gap-4 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4">
-            <div className="flex items-center gap-4">
-              <SidebarTrigger data-testid="button-mobile-menu" className="md:hidden" />
-              <div className="flex items-center gap-2 md:hidden">
-                <img src={logo} alt="SlipSafe" className="h-6 w-6" />
-                <span className="font-semibold">SlipSafe</span>
-              </div>
+          <header className="sticky top-0 z-40 flex h-auto items-center border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 py-3">
+            <div className="flex items-center gap-3 md:hidden">
+              <SidebarTrigger data-testid="button-mobile-menu" />
+            </div>
+            
+            <div className={`flex items-center justify-center md:hidden ${isAuthenticated ? '' : 'flex-1 -ml-8'}`}>
+              <img src={logo} alt="SlipSafe" className="h-20 w-20 sm:h-24 sm:w-24 object-contain" data-testid="img-header-logo" />
             </div>
             
             {isAuthenticated && (
-              <div className="flex items-center gap-3" data-testid="header-user-info">
+              <div className="flex items-center gap-3 ml-auto" data-testid="header-user-info">
                 <span className="text-sm hidden sm:block">
                   Hi, <span className="font-medium">{getDisplayName()}</span>
                 </span>
@@ -1139,7 +1171,7 @@ export default function LandingPage() {
             <HeroSection isAuthenticated={isAuthenticated} />
             <AudiencesSection />
             <HowItWorksSection />
-            <ForIndividualsSection />
+            <ForIndividualsSection isAuthenticated={isAuthenticated} />
             <ForSMMEsSection />
             <ForRetailersSection />
             <HelpSection />
