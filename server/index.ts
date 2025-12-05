@@ -74,6 +74,8 @@ async function seedAdminUser() {
     const hashedPassword = await hashPassword(adminPassword);
     const adminUser = await storage.createUser({
       username: adminUsername,
+      fullName: "System Administrator",
+      email: `${adminUsername}@slipsafe.local`,
       password: hashedPassword,
       phone: adminPhone,
       accountType: "individual",
@@ -104,10 +106,11 @@ app.use(session({
   secret: process.env.SESSION_SECRET || "slipsafe_dev_session_secret",
   resave: false,
   saveUninitialized: false,
+  rolling: true, // Refresh session expiry on each request
   cookie: {
     secure: process.env.NODE_ENV === "production",
     httpOnly: true,
-    maxAge: 1000 * 60 * 60 * 24 * 7,
+    maxAge: 1000 * 60 * 60 * 24 * 7, // Default: 7 days (extended to 30 days if "stay logged in" checked)
     sameSite: process.env.NODE_ENV === "production" ? "none" : "lax"
   }
 }));

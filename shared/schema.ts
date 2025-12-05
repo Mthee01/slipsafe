@@ -229,7 +229,9 @@ export const purchases = pgTable("purchases", {
   clientId: varchar("client_id"),
   invoiceNumber: text("invoice_number"),
   taxAmount: numeric("tax_amount"),
+  subtotal: numeric("subtotal"),
   vatAmount: numeric("vat_amount"),
+  vatSource: text("vat_source").default("none"),
   notes: text("notes"),
   // Policy fields - extracted from receipt or user-entered
   returnPolicyDays: integer("return_policy_days"),

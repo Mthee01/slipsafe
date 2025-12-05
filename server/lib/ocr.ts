@@ -1,12 +1,11 @@
 /**
  * OCR and receipt parsing helpers
- * Uses Gemini Vision AI as primary OCR for best accuracy
- * Falls back to Tesseract.js if Gemini is unavailable
+ * Uses Gemini Vision AI exclusively for best accuracy
+ * Returns user-friendly error if Gemini is unavailable
  * Also handles email receipt text parsing
  * Includes Sharp-based image preprocessing for improved OCR accuracy
  */
 
-import Tesseract from 'tesseract.js';
 import sharp from 'sharp';
 import path from 'path';
 import fs from 'fs';
@@ -411,13 +410,17 @@ export type OCRErrorType =
   | 'LOW_QUALITY_IMAGE'
   | 'PROCESSING_FAILED'
   | 'INVALID_FORMAT'
-  | 'PARTIAL_EXTRACTION';
+  | 'PARTIAL_EXTRACTION'
+  | 'SERVICE_UNAVAILABLE'
+  | 'SERVICE_ERROR';
 
 export interface OCRError {
   type: OCRErrorType;
   message: string;
-  suggestion: string;
-  canRetry: boolean;
+  suggestion?: string;
+  userMessage?: string;
+  canRetry?: boolean;
+  recoverable?: boolean;
 }
 
 export const OCR_ERRORS: Record<OCRErrorType, Omit<OCRError, 'type'>> = {
@@ -435,6 +438,16 @@ export const OCR_ERRORS: Record<OCRErrorType, Omit<OCRError, 'type'>> = {
     message: "Something went wrong while processing the receipt",
     suggestion: "Please try again. If the problem persists, you can enter the details manually.",
     canRetry: true
+  },
+  SERVICE_UNAVAILABLE: {
+    message: "OCR service temporarily unavailable",
+    userMessage: "Our scanning service is temporarily unavailable. Please save your receipt to your gallery and try uploading it again in a few minutes.",
+    recoverable: true
+  },
+  SERVICE_ERROR: {
+    message: "OCR processing failed",
+    userMessage: "Something went wrong while scanning your receipt. Please save it to your gallery and try again in a few minutes.",
+    recoverable: true
   },
   INVALID_FORMAT: {
     message: "The file format is not supported",
@@ -486,75 +499,8 @@ interface OCRResult {
   error?: OCRError;
 }
 
-/**
- * Extract text from receipt image using OCR
- * Applies preprocessing for better accuracy on mobile photos
- * @param imagePath - Path to uploaded image
- * @returns Extracted text with confidence score
- */
-export async function performOCR(imagePath: string): Promise<OCRResult> {
-  let processedPath = imagePath;
-  
-  try {
-    processedPath = await preprocessImage(imagePath);
-    console.log(`[OCR] Starting recognition on: ${processedPath}`);
-    
-    // Configure Tesseract for receipt scanning:
-    // - PSM 6: Assume single uniform block of text (best for receipts)
-    // - preserve_interword_spaces: Keep word spacing intact
-    const result = await Tesseract.recognize(processedPath, 'eng', {
-      logger: (info: any) => {
-        if (info.status === 'recognizing text') {
-          console.log(`[OCR] Progress: ${Math.round(info.progress * 100)}%`);
-        }
-      }
-    });
-    
-    const text = result.data.text.trim();
-    const confidence = result.data.confidence;
-    
-    console.log(`[OCR] Recognition complete. Confidence: ${confidence}%, Text length: ${text.length}`);
-    console.log(`[OCR] Raw text preview (first 500 chars):`, text.substring(0, 500));
-    
-    if (!text || text.length < 10) {
-      return {
-        text: '',
-        confidence: 0,
-        error: {
-          type: 'NO_TEXT_DETECTED',
-          ...OCR_ERRORS.NO_TEXT_DETECTED
-        }
-      };
-    }
-    
-    // Only reject extremely low quality images (10% threshold)
-    // Most legitimate receipts should pass this, even with poor lighting
-    if (confidence < 10) {
-      return {
-        text,
-        confidence,
-        error: {
-          type: 'LOW_QUALITY_IMAGE',
-          ...OCR_ERRORS.LOW_QUALITY_IMAGE
-        }
-      };
-    }
-    
-    return { text, confidence };
-  } catch (error) {
-    console.error('[OCR] Recognition failed:', error);
-    return {
-      text: '',
-      confidence: 0,
-      error: {
-        type: 'PROCESSING_FAILED',
-        ...OCR_ERRORS.PROCESSING_FAILED
-      }
-    };
-  } finally {
-    cleanupProcessedImage(processedPath, imagePath);
-  }
-}
+// Note: Tesseract.js fallback removed - using Gemini Vision AI exclusively
+// The performOCR function has been removed per user request for Gemini-only OCR
 
 /**
  * Parse receipt text to extract merchant, date, and total
@@ -1164,8 +1110,8 @@ export function parseReceiptText(text: string, ocrConfidence: number = 0): Parse
 
 /**
  * Full OCR pipeline: perform OCR and parse results
- * Uses Gemini Vision AI as primary OCR for best accuracy
- * Falls back to Tesseract if Gemini is unavailable
+ * Uses Gemini Vision AI exclusively for best accuracy
+ * If Gemini is unavailable, returns error asking user to save receipt and try later
  * @param imagePath - Path to uploaded image
  * @returns Parsed receipt data
  */
@@ -1173,61 +1119,8 @@ export async function processReceipt(imagePath: string): Promise<ParsedReceipt> 
   // Check if Gemini is available before attempting to use it
   const geminiAvailable = await isGeminiAvailable();
   
-  if (geminiAvailable) {
-    try {
-      console.log('[OCR] Attempting Gemini Vision AI for receipt scanning...');
-      const geminiResult = await performGeminiOCR(imagePath);
-      
-      // Check if Gemini returned useful data
-      if (geminiResult.merchant || geminiResult.total || geminiResult.date) {
-        console.log('[OCR] Gemini Vision AI successful!');
-        console.log(`[OCR] Gemini extracted: merchant="${geminiResult.merchant}", total=${geminiResult.total}, date="${geminiResult.date}", invoice="${geminiResult.invoiceNumber}"`);
-        
-        // Convert Gemini result to ParsedReceipt format
-        const result: ParsedReceipt = {
-          merchant: geminiResult.merchant,
-          date: geminiResult.date,
-          total: geminiResult.total,
-          subtotal: geminiResult.subtotal,
-          taxAmount: null,
-          vatAmount: geminiResult.vatAmount,
-          vatSource: geminiResult.vatSource,
-          invoiceNumber: geminiResult.invoiceNumber,
-          confidence: geminiResult.confidence,
-          rawText: geminiResult.rawText,
-          ocrConfidence: geminiResult.ocrConfidence,
-          policies: geminiResult.policies,
-          warnings: geminiResult.warnings
-        };
-        
-        // Add TODO flags for any missing fields
-        if (!result.merchant) {
-          result.merchantTODO = 'Manual entry required';
-        }
-        if (!result.date) {
-          result.dateTODO = 'Manual entry required';
-        }
-        if (!result.total) {
-          result.totalTODO = 'Manual entry required';
-        }
-        
-        return result;
-      }
-      
-      console.log('[OCR] Gemini returned no useful data, falling back to Tesseract...');
-    } catch (geminiError: any) {
-      console.log('[OCR] Gemini Vision AI failed:', geminiError.message);
-      console.log('[OCR] Falling back to Tesseract OCR...');
-    }
-  } else {
-    console.log('[OCR] Gemini Vision AI not available, using Tesseract OCR...');
-  }
-  
-  // Fallback to Tesseract OCR
-  const ocrResult = await performOCR(imagePath);
-  
-  // Handle OCR errors
-  if (ocrResult.error) {
+  if (!geminiAvailable) {
+    console.log('[OCR] Gemini Vision AI not available - no fallback, returning error');
     return {
       merchant: null,
       date: null,
@@ -1238,8 +1131,8 @@ export async function processReceipt(imagePath: string): Promise<ParsedReceipt> 
       vatSource: 'none',
       invoiceNumber: null,
       confidence: 'low',
-      rawText: ocrResult.text,
-      ocrConfidence: ocrResult.confidence,
+      rawText: '',
+      ocrConfidence: 0,
       policies: {
         returnPolicyDays: null,
         returnPolicyTerms: null,
@@ -1250,44 +1143,119 @@ export async function processReceipt(imagePath: string): Promise<ParsedReceipt> 
         warrantyTerms: null,
         policySource: 'merchant_default',
       },
-      error: ocrResult.error,
-      warnings: []
+      error: {
+        type: 'SERVICE_UNAVAILABLE',
+        message: 'OCR service temporarily unavailable',
+        userMessage: 'Our scanning service is temporarily unavailable. Please save your receipt to your gallery and try uploading it again in a few minutes.',
+        recoverable: true
+      },
+      warnings: ['Gemini Vision AI is currently unavailable']
     };
   }
   
-  const parsed = parseReceiptText(ocrResult.text, ocrResult.confidence);
-  
-  // Add TODO flags and warnings for missing fields
-  const missingFields: string[] = [];
-  
-  if (!parsed.merchant) {
-    parsed.merchantTODO = 'Manual entry required - OCR could not detect merchant';
-    missingFields.push('merchant name');
-  }
-  if (!parsed.date) {
-    parsed.dateTODO = 'Manual entry required - OCR could not detect date';
-    missingFields.push('purchase date');
-  }
-  if (!parsed.total) {
-    parsed.totalTODO = 'Manual entry required - OCR could not detect total';
-    missingFields.push('total amount');
-  }
-  
-  // Add partial extraction error if some fields are missing
-  if (missingFields.length > 0 && missingFields.length < 3) {
-    parsed.warnings.push(`Could not detect: ${missingFields.join(', ')}`);
-    parsed.error = {
-      type: 'PARTIAL_EXTRACTION',
-      ...OCR_ERRORS.PARTIAL_EXTRACTION
+  try {
+    console.log('[OCR] Attempting Gemini Vision AI for receipt scanning...');
+    const geminiResult = await performGeminiOCR(imagePath);
+    
+    // Check if Gemini returned useful data
+    if (geminiResult.merchant || geminiResult.total || geminiResult.date) {
+      console.log('[OCR] Gemini Vision AI successful!');
+      console.log(`[OCR] Gemini extracted: merchant="${geminiResult.merchant}", total=${geminiResult.total}, date="${geminiResult.date}", invoice="${geminiResult.invoiceNumber}", vat=${geminiResult.vatAmount}`);
+      
+      // Convert Gemini result to ParsedReceipt format
+      const result: ParsedReceipt = {
+        merchant: geminiResult.merchant,
+        date: geminiResult.date,
+        total: geminiResult.total,
+        subtotal: geminiResult.subtotal,
+        taxAmount: null,
+        vatAmount: geminiResult.vatAmount,
+        vatSource: geminiResult.vatSource,
+        invoiceNumber: geminiResult.invoiceNumber,
+        confidence: geminiResult.confidence,
+        rawText: geminiResult.rawText,
+        ocrConfidence: geminiResult.ocrConfidence,
+        policies: geminiResult.policies,
+        warnings: geminiResult.warnings
+      };
+      
+      // Add TODO flags for any missing fields
+      if (!result.merchant) {
+        result.merchantTODO = 'Manual entry required';
+      }
+      if (!result.date) {
+        result.dateTODO = 'Manual entry required';
+      }
+      if (!result.total) {
+        result.totalTODO = 'Manual entry required';
+      }
+      
+      return result;
+    }
+    
+    // Gemini returned no useful data
+    console.log('[OCR] Gemini returned no useful data from receipt');
+    return {
+      merchant: null,
+      date: null,
+      total: null,
+      subtotal: null,
+      taxAmount: null,
+      vatAmount: null,
+      vatSource: 'none',
+      invoiceNumber: null,
+      confidence: 'low',
+      rawText: geminiResult.rawText || '',
+      ocrConfidence: geminiResult.ocrConfidence || 0,
+      policies: {
+        returnPolicyDays: null,
+        returnPolicyTerms: null,
+        refundType: null,
+        exchangePolicyDays: null,
+        exchangePolicyTerms: null,
+        warrantyMonths: null,
+        warrantyTerms: null,
+        policySource: 'merchant_default',
+      },
+      error: {
+        type: 'LOW_QUALITY_IMAGE',
+        message: 'Could not extract receipt information',
+        userMessage: 'We couldn\'t read this receipt clearly. Please try taking a clearer photo with good lighting, or save it to your gallery and upload it.',
+        recoverable: true
+      },
+      warnings: ['No receipt information could be extracted']
     };
-  } else if (missingFields.length === 3) {
-    // All fields missing despite having text
-    parsed.error = {
-      type: 'LOW_QUALITY_IMAGE',
-      ...OCR_ERRORS.LOW_QUALITY_IMAGE
+  } catch (geminiError: any) {
+    console.log('[OCR] Gemini Vision AI failed:', geminiError.message);
+    return {
+      merchant: null,
+      date: null,
+      total: null,
+      subtotal: null,
+      taxAmount: null,
+      vatAmount: null,
+      vatSource: 'none',
+      invoiceNumber: null,
+      confidence: 'low',
+      rawText: '',
+      ocrConfidence: 0,
+      policies: {
+        returnPolicyDays: null,
+        returnPolicyTerms: null,
+        refundType: null,
+        exchangePolicyDays: null,
+        exchangePolicyTerms: null,
+        warrantyMonths: null,
+        warrantyTerms: null,
+        policySource: 'merchant_default',
+      },
+      error: {
+        type: 'SERVICE_ERROR',
+        message: 'OCR processing failed',
+        userMessage: 'Something went wrong while scanning your receipt. Please save it to your gallery and try again in a few minutes.',
+        recoverable: true
+      },
+      warnings: [`OCR error: ${geminiError.message}`]
     };
-    parsed.warnings.push('No receipt information could be extracted from the image');
   }
-
-  return parsed;
 }

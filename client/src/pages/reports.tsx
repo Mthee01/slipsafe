@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BarChart3, PieChart, TrendingUp, Receipt, Coins, Percent, Download, Calendar, Building2, UserCircle, Store, FileText, Loader2, RotateCcw, Shield, AlertTriangle, CheckCircle } from "lucide-react";
+import { BarChart3, PieChart, TrendingUp, Receipt, Coins, Percent, Download, Calendar, Building2, UserCircle, Store, FileText, Loader2, RotateCcw, Shield, AlertTriangle, CheckCircle, Eye } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { Progress } from "@/components/ui/progress";
@@ -245,7 +245,7 @@ function PersonalReportsDashboard() {
                       <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                         <div>
                           <p className="font-medium">{item.merchant}</p>
-                          <p className="text-sm text-muted-foreground">${item.total}</p>
+                          <p className="text-sm text-muted-foreground">R{item.total}</p>
                         </div>
                         <div className="text-right">
                           <Badge variant={item.daysLeft <= 3 ? "destructive" : "secondary"}>
@@ -278,7 +278,7 @@ function PersonalReportsDashboard() {
                       <div key={index} className="flex items-center justify-between p-3 rounded-lg bg-muted/50">
                         <div>
                           <p className="font-medium">{item.merchant}</p>
-                          <p className="text-sm text-muted-foreground">${item.total}</p>
+                          <p className="text-sm text-muted-foreground">R{item.total}</p>
                         </div>
                         <div className="text-right">
                           <Badge variant={item.daysLeft <= 7 ? "destructive" : "secondary"}>
@@ -328,7 +328,7 @@ function PersonalReportsDashboard() {
                           <Cell key={`cell-${index}`} fill={entry.fill} />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value: number) => [`$${value.toFixed(2)}`, "Amount"]} />
+                      <Tooltip formatter={(value: number) => [`R${value.toFixed(2)}`, "Amount"]} />
                     </RechartsPieChart>
                   </ResponsiveContainer>
                 </div>
@@ -569,6 +569,15 @@ export default function Reports() {
     URL.revokeObjectURL(url);
   };
 
+  const handlePreviewPdf = (includeTransactions: boolean = false) => {
+    const params = new URLSearchParams();
+    if (startDate) params.append("startDate", startDate);
+    if (endDate) params.append("endDate", endDate);
+    if (includeTransactions) params.append("includeTransactions", "true");
+    
+    window.open(`/api/reports/pdf?${params.toString()}`, "_blank");
+  };
+
   const handleDownloadPdf = async (includeTransactions: boolean = false) => {
     setIsDownloadingPdf(true);
     try {
@@ -678,6 +687,15 @@ export default function Reports() {
               Export CSV
             </Button>
             <Button 
+              onClick={() => handlePreviewPdf(false)} 
+              disabled={!data}
+              variant="outline"
+              data-testid="button-preview-pdf"
+            >
+              <Eye className="h-4 w-4 mr-2" />
+              Preview PDF
+            </Button>
+            <Button 
               onClick={() => handleDownloadPdf(false)} 
               disabled={!data || isDownloadingPdf}
               data-testid="button-download-pdf"
@@ -690,17 +708,13 @@ export default function Reports() {
               Download PDF Report
             </Button>
             <Button 
-              onClick={() => handleDownloadPdf(true)} 
-              disabled={!data || isDownloadingPdf}
-              variant="secondary"
-              data-testid="button-download-pdf-detailed"
+              onClick={() => handlePreviewPdf(true)} 
+              disabled={!data}
+              variant="outline"
+              data-testid="button-preview-pdf-detailed"
             >
-              {isDownloadingPdf ? (
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              ) : (
-                <FileText className="h-4 w-4 mr-2" />
-              )}
-              Full Report with Transactions
+              <Eye className="h-4 w-4 mr-2" />
+              Preview Full Report
             </Button>
           </div>
         </div>

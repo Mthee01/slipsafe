@@ -67,6 +67,7 @@ interface PreviewData {
   imagePath: string | null;
   sourceType: 'camera' | 'upload' | 'email_paste';
   policies: PolicyPreview;
+  subtotal: number | null;
   vatAmount: number | null;
   vatSource: 'extracted' | 'calculated' | 'none';
   invoiceNumber: string | null;
@@ -419,20 +420,40 @@ export async function registerRoutes(app: Express): Promise<Server> {
           return res.status(500).json({ error: "Login failed. Please try again." });
         }
         
-        // Extend session cookie if "Stay logged in" was checked
-        if (rememberMe && req.session) {
-          // 30 days in milliseconds
-          const thirtyDays = 1000 * 60 * 60 * 24 * 30;
-          req.session.cookie.maxAge = thirtyDays;
-        }
-        
-        await logUserActivity(user.id, "login", { rememberMe: !!rememberMe }, req);
-        
-        // Return full user data (excluding password)
-        const { password, ...userWithoutPassword } = user;
-        res.json({
-          success: true,
-          user: userWithoutPassword
+        // Regenerate session to prevent session fixation attacks
+        // and ensure cookie changes are properly flushed
+        req.session.regenerate(async (regenErr) => {
+          if (regenErr) {
+            console.error("Session regeneration failed:", regenErr);
+            return res.status(500).json({ error: "Login failed. Please try again." });
+          }
+          
+          // Re-attach user to the regenerated session
+          (req.session as any).passport = { user: user.id };
+          
+          // Extend session cookie if "Stay logged in" was checked
+          if (rememberMe) {
+            // 30 days in milliseconds
+            const thirtyDays = 1000 * 60 * 60 * 24 * 30;
+            req.session.cookie.maxAge = thirtyDays;
+          }
+          
+          // Save session with new settings before responding
+          req.session.save(async (saveErr) => {
+            if (saveErr) {
+              console.error("Session save failed:", saveErr);
+              return res.status(500).json({ error: "Login failed. Please try again." });
+            }
+            
+            await logUserActivity(user.id, "login", { rememberMe: !!rememberMe }, req);
+            
+            // Return full user data (excluding password)
+            const { password: _, ...userWithoutPassword } = user;
+            res.json({
+              success: true,
+              user: userWithoutPassword
+            });
+          });
         });
       });
     })(req, res, next);
@@ -1059,6 +1080,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         imagePath: req.file.path,
         sourceType: "upload",
         policies: ocrResult.policies,
+        subtotal: ocrResult.subtotal,
         vatAmount: ocrResult.vatAmount,
         vatSource: ocrResult.vatSource,
         invoiceNumber: ocrResult.invoiceNumber,
@@ -1083,6 +1105,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           partialDataSuggestion: ocrResult.error?.suggestion,
           // Policy data extracted from receipt
           policies: ocrResult.policies,
+          subtotal: ocrResult.subtotal,
           vatAmount: ocrResult.vatAmount,
           vatSource: ocrResult.vatSource,
           invoiceNumber: ocrResult.invoiceNumber
@@ -1135,7 +1158,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "No preview data found. Please scan a receipt first." });
       }
 
-      const { merchant, date, total, category } = req.body;
+      const { merchant, date, total, category, subtotal, vatAmount, vatSource } = req.body;
 
       // Validate required fields
       if (!merchant || !date || !total) {
@@ -1217,8 +1240,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
         warrantyMonths: policies.warrantyMonths ?? null,
         warrantyTerms: policies.warrantyTerms ?? null,
         policySource: policies.policySource || 'merchant_default',
-        // VAT fields
-        vatAmount: previewData.vatAmount?.toString() ?? null,
+        // VAT fields - use user-edited values from request body, fallback to preview data
+        subtotal: subtotal !== undefined && subtotal !== null ? subtotal.toString() : (previewData.subtotal?.toString() ?? null),
+        vatAmount: vatAmount !== undefined && vatAmount !== null ? vatAmount.toString() : (previewData.vatAmount?.toString() ?? null),
+        vatSource: vatSource || previewData.vatSource || 'none',
         invoiceNumber: invoiceNumber,
       };
 
@@ -1390,6 +1415,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         imagePath: null,
         sourceType: 'email_paste',
         policies: parseResult.policies,
+        subtotal: parseResult.subtotal,
         vatAmount: parseResult.vatAmount,
         vatSource: parseResult.vatSource,
         invoiceNumber: parseResult.invoiceNumber,

@@ -19,10 +19,11 @@ Preferred communication style: Simple, everyday language.
 
 **Backend**:
 - **API**: RESTful Express.js server handling receipt OCR processing, claim generation/verification, merchant portal, and USSD webhooks.
-- **OCR Pipeline**: Hybrid OCR approach with Google Gemini Vision AI as primary method and Tesseract.js as fallback.
-  - **Primary: Gemini Vision AI** (`server/lib/gemini-ocr.ts`): Uses multimodal AI to analyze receipt images directly, providing superior accuracy especially for thermal receipts. Extracts merchant, date, total, VAT, invoice number, and policies in a single API call.
-  - **Fallback: Tesseract.js**: Traditional OCR with Sharp image preprocessing (3x upscale, normalization, contrast enhancement) used when Gemini is unavailable. Employs enhanced regex and heuristics for data extraction.
-  - **VAT Extraction**: Three-tier logic for extracting explicit VAT, calculating from subtotal/total difference, or estimating at 15%.
+- **OCR Pipeline**: Uses Google Gemini Vision AI exclusively for receipt scanning.
+  - **Gemini Vision AI** (`server/lib/gemini-ocr.ts`): Uses multimodal AI to analyze receipt images directly, providing superior accuracy especially for thermal receipts. Extracts merchant, date, total, VAT, invoice number, and policies in a single API call.
+  - **No Fallback**: When Gemini is unavailable, displays user-friendly message asking to save receipt and try again later.
+  - **Refresh OCR**: Button to clear cache and re-scan receipts with fresh OCR processing if merchant name is incorrect.
+  - **VAT Extraction**: Three-tier logic for extracting explicit VAT, calculating from subtotal/total difference, or estimating at 15%. VAT data includes `subtotal`, `vatAmount`, and `vatSource` ('extracted'|'calculated'|'none') fields.
   - **Policy Extraction**: Automatically extracts return policy days, refund types, exchange policy periods, and warranty terms.
   - **Conditional Policy Detection**: Distinguishes between conditional policies ("NO REFUNDS WITHOUT ORIGINAL INVOICE" = returns allowed with invoice) and unconditional bans ("ALL SALES FINAL" = no returns). Conditional policies show "Not specified" for days rather than "No returns accepted".
   - **Merchant Rules Fallback**: When receipt shows conditional policy but no specific days, system pulls default return/warranty days from merchant rules table if configured. Policy source is tracked as 'merchant_default' in these cases.
@@ -62,8 +63,7 @@ Preferred communication style: Simple, everyday language.
 - **Resend**: Transactional email delivery.
 
 **Key Libraries**:
-- `@google/genai`: Gemini Vision AI for primary OCR.
-- `tesseract.js`: Fallback OCR processing.
+- `@google/genai`: Gemini Vision AI for OCR (exclusive, no fallback).
 - `sharp`: Image preprocessing.
 - `multer`: Handles multipart file uploads.
 - `jsonwebtoken`: For JWT creation and verification.

@@ -7,8 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Search, Calendar, Store, Clock, Tag, ArrowRight, Filter, Sparkles, Info, Download, Coins, Eye, X, FileText } from "lucide-react";
+import { Search, Calendar, Store, Clock, Tag, ArrowRight, Filter, Sparkles, Info, Download, Coins, Eye, X, FileText, LayoutGrid, List } from "lucide-react";
 import { CATEGORIES, type Purchase, type ConfidenceLevel, type MerchantRule } from "@shared/schema";
 import { Link } from "wouter";
 
@@ -16,6 +17,7 @@ export default function Receipts() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState<string>("all");
   const [viewingPdfId, setViewingPdfId] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -259,6 +261,26 @@ export default function Receipts() {
               </SelectContent>
             </Select>
           </div>
+          <div className="flex items-center gap-1 border rounded-md p-1">
+            <Button
+              variant={viewMode === "cards" ? "default" : "ghost"}
+              size="icon"
+              onClick={() => setViewMode("cards")}
+              title="Card view"
+              data-testid="button-view-cards"
+            >
+              <LayoutGrid className="h-4 w-4" />
+            </Button>
+            <Button
+              variant={viewMode === "table" ? "default" : "ghost"}
+              size="icon"
+              onClick={() => setViewMode("table")}
+              title="Table view"
+              data-testid="button-view-table"
+            >
+              <List className="h-4 w-4" />
+            </Button>
+          </div>
         </div>
 
         {isLoading ? (
@@ -292,6 +314,73 @@ export default function Receipts() {
                   Upload Receipt
                 </Button>
               </Link>
+            </CardContent>
+          </Card>
+        ) : viewMode === "table" ? (
+          <Card data-testid="table-view-container">
+            <CardContent className="p-0">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Merchant</TableHead>
+                    <TableHead>Date</TableHead>
+                    <TableHead className="text-right">Amount</TableHead>
+                    <TableHead>Category</TableHead>
+                    <TableHead>Status</TableHead>
+                    <TableHead className="text-right">Actions</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {purchases.map((purchase) => {
+                    const policy = getPurchasePolicyInfo(purchase);
+                    return (
+                      <TableRow key={purchase.id} data-testid={`row-receipt-${purchase.id}`}>
+                        <TableCell className="font-medium">
+                          <div className="flex items-center gap-2">
+                            <Store className="h-4 w-4 text-muted-foreground" />
+                            <span className="truncate max-w-[200px]" data-testid={`text-merchant-${purchase.id}`}>
+                              {purchase.merchant}
+                            </span>
+                          </div>
+                        </TableCell>
+                        <TableCell data-testid={`text-date-${purchase.id}`}>
+                          {new Date(purchase.date).toLocaleDateString()}
+                        </TableCell>
+                        <TableCell className="text-right font-medium" data-testid={`text-total-${purchase.id}`}>
+                          R{purchase.total}
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className={`text-xs ${getCategoryColor(purchase.category || "Other")}`}>
+                            {purchase.category || "Other"}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {getStatusBadge(purchase.returnBy, purchase.warrantyEnds, purchase.refundType, policy.hasReturnPolicy, policy.hasWarrantyPolicy)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex items-center justify-end gap-1">
+                            <Link href={`/receipt/${purchase.id}`}>
+                              <Button variant="ghost" size="icon" title="View details" data-testid={`button-view-receipt-${purchase.id}`}>
+                                <Eye className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                            <a href={`/api/purchases/${purchase.id}/pdf`} download>
+                              <Button variant="ghost" size="icon" title="Download PDF" data-testid={`button-download-pdf-${purchase.id}`}>
+                                <Download className="h-4 w-4" />
+                              </Button>
+                            </a>
+                            <Link href={`/claims?hash=${purchase.hash}`}>
+                              <Button variant="ghost" size="icon" title="Create claim" data-testid={`button-create-claim-${purchase.id}`}>
+                                <ArrowRight className="h-4 w-4" />
+                              </Button>
+                            </Link>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
             </CardContent>
           </Card>
         ) : (

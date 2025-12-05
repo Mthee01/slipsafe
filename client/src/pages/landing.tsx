@@ -908,8 +908,8 @@ function HelpSection() {
       icon: SiWhatsapp,
       title: "WhatsApp Support",
       description: "Chat with SlipSafe on WhatsApp",
-      detail: "083 678 4884",
-      href: "https://wa.me/27836784884?text=Hi%20SlipSafe%2C%20I%27d%20like%20to%20know%20more%20about%20your%20app.",
+      detail: "076 488 5035",
+      href: "https://wa.me/27764885035?text=Hi%20SlipSafe%2C%20I%27d%20like%20to%20know%20more%20about%20your%20app.",
       external: true,
       buttonText: "Chat on WhatsApp",
       iconColor: "text-green-600",
@@ -930,9 +930,9 @@ function HelpSection() {
       icon: Phone,
       title: "Phone",
       description: "Call us",
-      detail: "083 678 4884",
+      detail: "076 488 5035",
       subDetail: "Business hours: Mon–Fri, 09:00–17:00 (SAST)",
-      href: "tel:+27836784884",
+      href: "tel:+27764885035",
       external: false,
       buttonText: "Call Now",
       iconColor: "text-purple-600",
@@ -1098,8 +1098,8 @@ function Footer() {
                 </a>
               </li>
               <li>
-                <a href="tel:+27836784884" className="hover:text-foreground transition-colors" data-testid="link-footer-phone">
-                  083 678 4884
+                <a href="tel:+27764885035" className="hover:text-foreground transition-colors" data-testid="link-footer-phone">
+                  076 488 5035
                 </a>
               </li>
             </ul>

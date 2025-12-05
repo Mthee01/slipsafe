@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
-import { Building2, User } from "lucide-react";
+import { Building2, User, ArrowLeft } from "lucide-react";
 
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
@@ -324,6 +324,14 @@ export default function Register() {
               Already have an account?{" "}
               <Link href="/login" className="text-primary hover:underline" data-testid="link-login">
                 Sign in
+              </Link>
+            </div>
+            <div className="text-center pt-2">
+              <Link href="/landing">
+                <Button variant="ghost" data-testid="link-back-to-home">
+                  <ArrowLeft className="mr-2 h-4 w-4" />
+                  Back to Home
+                </Button>
               </Link>
             </div>
           </CardFooter>

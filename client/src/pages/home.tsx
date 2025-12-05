@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { useOnlineStatus } from "@/hooks/use-online-status";
 import { useImageQuality, type ImageQualityResult } from "@/hooks/use-image-quality";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
@@ -73,6 +74,9 @@ export default function Home() {
     date: string;
     total: string;
     invoiceNumber: string;
+    subtotal?: string;
+    vatAmount?: string;
+    vatSource?: 'extracted' | 'calculated' | 'none';
   } | null>(null);
   const [editedPolicies, setEditedPolicies] = useState<PolicyData>(defaultPolicies);
   const [showPolicyEditor, setShowPolicyEditor] = useState(false);
@@ -127,13 +131,17 @@ export default function Home() {
   const { analyzeImage, resetQuality } = useImageQuality();
   const isOnline = useOnlineStatus();
   const queryClient = useQueryClient();
+  const { user } = useAuth();
+  const isBusinessMode = user?.activeContext === 'business';
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
   const [ocrError, setOcrError] = useState<{
     message: string;
-    suggestion: string;
+    suggestion?: string;
+    userMessage?: string;
     canRetry: boolean;
+    recoverable?: boolean;
     errorType?: string;
   } | null>(null);
 
@@ -152,8 +160,10 @@ export default function Home() {
       if (!response.ok || !data.success) {
         throw {
           message: data.error || "OCR processing failed",
-          suggestion: data.suggestion || "Please try again",
+          suggestion: data.suggestion,
+          userMessage: data.userMessage || "Please try again",
           canRetry: data.canRetry !== false,
+          recoverable: data.recoverable,
           errorType: data.errorType,
           isOcrError: true
         };
@@ -167,8 +177,11 @@ export default function Home() {
       setEditedData({
         merchant: data.ocrData.merchant || "",
         date: data.ocrData.date || "",
-        total: data.ocrData.total || "",
+        total: data.ocrData.total?.toString() || "",
         invoiceNumber: data.ocrData.invoiceNumber || "",
+        subtotal: data.ocrData.subtotal?.toString() || "",
+        vatAmount: data.ocrData.vatAmount?.toString() || "",
+        vatSource: data.ocrData.vatSource || 'none',
       });
       
       // Set policies from OCR if extracted
@@ -195,13 +208,15 @@ export default function Home() {
         setOcrError({
           message: error.message,
           suggestion: error.suggestion,
+          userMessage: error.userMessage,
           canRetry: error.canRetry,
+          recoverable: error.recoverable,
           errorType: error.errorType
         });
       } else {
         setOcrError({
           message: "Something went wrong",
-          suggestion: "Please try again or enter details manually",
+          userMessage: "Please try again or enter details manually",
           canRetry: true
         });
       }
@@ -246,6 +261,9 @@ export default function Home() {
         date: data.ocrData.date || "",
         total: data.ocrData.total?.toString() || "",
         invoiceNumber: data.ocrData.invoiceNumber || "",
+        subtotal: data.ocrData.subtotal?.toString() || "",
+        vatAmount: data.ocrData.vatAmount?.toString() || "",
+        vatSource: data.ocrData.vatSource || 'none',
       });
       
       // Set policies from email parsing if extracted
@@ -358,15 +376,21 @@ export default function Home() {
       }
       
       // If online, try API request
+      // Only include VAT data if in business mode
+      const isBusiness = user?.activeContext === 'business';
       try {
-        return await apiRequest("POST", "/api/receipts/confirm", {
+        const response = await apiRequest("POST", "/api/receipts/confirm", {
           merchant: editedData.merchant.trim(),
           date: editedData.date,
           total: editedData.total,
           invoiceNumber: editedData.invoiceNumber || null,
+          subtotal: isBusiness && editedData.subtotal ? parseFloat(editedData.subtotal) : null,
+          vatAmount: isBusiness && editedData.vatAmount ? parseFloat(editedData.vatAmount) : null,
+          vatSource: isBusiness ? (editedData.vatSource || 'none') : 'none',
           category: selectedCategory,
           policies: editedPolicies,
         });
+        return await response.json();
       } catch (error: any) {
         // If network error, queue for later
         if (error.message?.includes('Failed to fetch') || error.message?.includes('Network')) {
@@ -941,10 +965,10 @@ export default function Home() {
                   <XCircle className="h-5 w-5 text-destructive mt-0.5 shrink-0" />
                   <div className="space-y-1">
                     <p className="font-medium text-destructive" data-testid="text-ocr-error-title">
-                      {ocrError.message}
+                      {ocrError.errorType === 'SERVICE_UNAVAILABLE' ? 'Scanning Service Unavailable' : ocrError.message}
                     </p>
                     <p className="text-sm text-muted-foreground" data-testid="text-ocr-error-suggestion">
-                      {ocrError.suggestion}
+                      {ocrError.userMessage || ocrError.suggestion || 'Please try again'}
                     </p>
                   </div>
                 </div>
@@ -982,6 +1006,9 @@ export default function Home() {
                         date: new Date().toISOString().split('T')[0],
                         total: "",
                         invoiceNumber: "",
+                        subtotal: "",
+                        vatAmount: "",
+                        vatSource: 'none',
                       });
                     }}
                     data-testid="button-manual-entry"
@@ -1003,15 +1030,36 @@ export default function Home() {
                   <Edit className="h-5 w-5" />
                   Review & Edit OCR Results
                 </CardTitle>
-                <Badge 
-                  variant={ocrResult.confidence === 'high' ? 'default' : ocrResult.confidence === 'medium' ? 'secondary' : 'outline'}
-                  className="text-xs"
-                  title={`OCR confidence: ${ocrResult.confidence}`}
-                  data-testid="badge-ocr-confidence"
-                >
-                  <Sparkles className="h-3 w-3 mr-1" />
-                  {ocrResult.confidence} confidence
-                </Badge>
+                <div className="flex items-center gap-2">
+                  {selectedFile && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setOcrResult(null);
+                        setEditedData(null);
+                        setEditedPolicies(defaultPolicies);
+                        if (selectedFile) {
+                          previewMutation.mutate(selectedFile);
+                        }
+                      }}
+                      disabled={previewMutation.isPending}
+                      title="Re-scan this receipt with fresh OCR"
+                      data-testid="button-refresh-ocr"
+                    >
+                      <RotateCcw className={`h-4 w-4 ${previewMutation.isPending ? 'animate-spin' : ''}`} />
+                    </Button>
+                  )}
+                  <Badge 
+                    variant={ocrResult.confidence === 'high' ? 'default' : ocrResult.confidence === 'medium' ? 'secondary' : 'outline'}
+                    className="text-xs"
+                    title={`OCR confidence: ${ocrResult.confidence}`}
+                    data-testid="badge-ocr-confidence"
+                  >
+                    <Sparkles className="h-3 w-3 mr-1" />
+                    {ocrResult.confidence} confidence
+                  </Badge>
+                </div>
               </div>
               <CardDescription>
                 Verify the extracted information and make corrections if needed
@@ -1086,6 +1134,65 @@ export default function Home() {
                     </p>
                   )}
                 </div>
+
+                {/* VAT Information Section - Only show in business mode */}
+                {isBusinessMode && (
+                  <div className="p-3 bg-blue-50 dark:bg-blue-950/30 border border-blue-200 dark:border-blue-800 rounded-md space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-medium text-blue-700 dark:text-blue-300 uppercase tracking-wide flex items-center gap-2">
+                        <Coins className="h-3.5 w-3.5" />
+                        VAT Information
+                        {editedData.vatSource === 'extracted' && (
+                          <Badge variant="secondary" className="text-[10px] bg-green-100 text-green-700 dark:bg-green-900 dark:text-green-300" data-testid="badge-vat-extracted">
+                            Auto-detected
+                          </Badge>
+                        )}
+                        {editedData.vatSource === 'calculated' && (
+                          <Badge variant="secondary" className="text-[10px] bg-amber-100 text-amber-700 dark:bg-amber-900 dark:text-amber-300" data-testid="badge-vat-calculated">
+                            Calculated (15%)
+                          </Badge>
+                        )}
+                      </p>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <div className="space-y-1">
+                        <Label htmlFor="edit-subtotal" className="text-xs text-blue-600 dark:text-blue-400">
+                          Subtotal (excl. VAT)
+                        </Label>
+                        <Input
+                          id="edit-subtotal"
+                          type="number"
+                          step="0.01"
+                          value={editedData.subtotal || ''}
+                          onChange={(e) => setEditedData({ ...editedData, subtotal: e.target.value })}
+                          placeholder="0.00"
+                          className="h-8 text-sm"
+                          data-testid="input-edit-subtotal"
+                        />
+                      </div>
+                      <div className="space-y-1">
+                        <Label htmlFor="edit-vat" className="text-xs text-blue-600 dark:text-blue-400">
+                          VAT Amount (R)
+                        </Label>
+                        <Input
+                          id="edit-vat"
+                          type="number"
+                          step="0.01"
+                          value={editedData.vatAmount || ''}
+                          onChange={(e) => setEditedData({ ...editedData, vatAmount: e.target.value, vatSource: 'extracted' })}
+                          placeholder="0.00"
+                          className="h-8 text-sm"
+                          data-testid="input-edit-vat"
+                        />
+                      </div>
+                    </div>
+                    {!editedData.vatAmount && (
+                      <p className="text-xs text-blue-600/70 dark:text-blue-400/70">
+                        VAT was not detected. You can enter it manually for tax reporting purposes.
+                      </p>
+                    )}
+                  </div>
+                )}
 
                 <div className="p-3 bg-muted rounded-md space-y-2">
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
@@ -1373,7 +1480,7 @@ export default function Home() {
                     Return By
                   </div>
                   <p className="font-medium" data-testid="text-saved-return">
-                    {new Date(savedPurchase.returnBy).toLocaleDateString()}
+                    {savedPurchase.returnBy ? new Date(savedPurchase.returnBy).toLocaleDateString() : 'Not specified'}
                   </p>
                 </div>
 
@@ -1383,18 +1490,39 @@ export default function Home() {
                     Warranty Ends
                   </div>
                   <p className="font-medium" data-testid="text-saved-warranty">
-                    {new Date(savedPurchase.warrantyEnds).toLocaleDateString()}
+                    {savedPurchase.warrantyEnds ? new Date(savedPurchase.warrantyEnds).toLocaleDateString() : 'Not specified'}
                   </p>
                 </div>
               </div>
 
-              <Button
-                onClick={handleCreateClaim}
-                className="w-full"
-                data-testid="button-create-claim"
-              >
-                Create Return Claim
-              </Button>
+              <div className="flex gap-3">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setOcrResult(null);
+                    setEditedData(null);
+                    setEditedPolicies(defaultPolicies);
+                    setSelectedFile(null);
+                    setPreviewUrl(null);
+                    setSavedPurchase(null);
+                    setOcrError(null);
+                    setEmailText("");
+                    setShowPolicyEditor(false);
+                    setSelectedCategory("Other");
+                  }}
+                  className="flex-1"
+                  data-testid="button-done"
+                >
+                  Done
+                </Button>
+                <Button
+                  onClick={handleCreateClaim}
+                  className="flex-1"
+                  data-testid="button-create-claim"
+                >
+                  Create Return Claim
+                </Button>
+              </div>
             </CardContent>
           </Card>
         )}
