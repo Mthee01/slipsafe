@@ -1,4 +1,4 @@
-import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe, Users } from "lucide-react";
+import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe, Users, Activity, BookOpen } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -129,7 +129,7 @@ export function AppSidebar() {
         </div>
       </SidebarHeader>
 
-      {isBusiness && (
+      {isBusiness && !isAdmin && (
         <div className="border-b p-3 bg-muted/30">
           {isBusinessContext ? (
             <div className="mb-3">
@@ -167,49 +167,15 @@ export function AppSidebar() {
       )}
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild tooltip="Home">
-                  <Link href="/landing" data-testid="nav-home" onClick={handleMenuItemClick}>
-                    <Globe className="h-4 w-4" />
-                    <span>Home</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        <SidebarGroup>
-          <SidebarGroupLabel>Navigation</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {filteredMenuItems.map((item) => (
-                <SidebarMenuItem key={item.title}>
-                  <SidebarMenuButton asChild isActive={location === item.url}>
-                    <Link href={item.url} data-testid={item.testId} onClick={handleMenuItemClick}>
-                      <item.icon className="h-4 w-4" />
-                      <span>{item.title}</span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {isAdmin && (
+        {!isAdmin && (
           <SidebarGroup>
-            <SidebarGroupLabel>Administration</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={location === "/admin"}>
-                    <Link href="/admin" data-testid="nav-admin" onClick={handleMenuItemClick}>
-                      <Shield className="h-4 w-4" />
-                      <span>Admin Dashboard</span>
+                  <SidebarMenuButton asChild tooltip="Home">
+                    <Link href="/landing" data-testid="nav-home" onClick={handleMenuItemClick}>
+                      <Globe className="h-4 w-4" />
+                      <span>Home</span>
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -218,7 +184,77 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {isBusiness && isBusinessContext && (
+        {!isAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Navigation</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {filteredMenuItems.map((item) => (
+                  <SidebarMenuItem key={item.title}>
+                    <SidebarMenuButton asChild isActive={location === item.url}>
+                      <Link href={item.url} data-testid={item.testId} onClick={handleMenuItemClick}>
+                        <item.icon className="h-4 w-4" />
+                        <span>{item.title}</span>
+                      </Link>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {isAdmin && (
+          <SidebarGroup>
+            <SidebarGroupLabel>Administration</SidebarGroupLabel>
+            <SidebarGroupContent>
+              <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin"}>
+                    <Link href="/admin" data-testid="nav-admin-overview" onClick={handleMenuItemClick}>
+                      <Shield className="h-4 w-4" />
+                      <span>Overview</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/users"}>
+                    <Link href="/admin/users" data-testid="nav-admin-users" onClick={handleMenuItemClick}>
+                      <Users className="h-4 w-4" />
+                      <span>Users</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/organizations"}>
+                    <Link href="/admin/organizations" data-testid="nav-admin-orgs" onClick={handleMenuItemClick}>
+                      <Building2 className="h-4 w-4" />
+                      <span>Organizations</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/merchant-rules"}>
+                    <Link href="/admin/merchant-rules" data-testid="nav-admin-merchant-rules" onClick={handleMenuItemClick}>
+                      <BookOpen className="h-4 w-4" />
+                      <span>Merchant Rules</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+                <SidebarMenuItem>
+                  <SidebarMenuButton asChild isActive={location === "/admin/activity"}>
+                    <Link href="/admin/activity" data-testid="nav-admin-activity" onClick={handleMenuItemClick}>
+                      <Activity className="h-4 w-4" />
+                      <span>Activity Logs</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        )}
+
+        {isBusiness && isBusinessContext && !isAdmin && (
           <SidebarGroup>
             <SidebarGroupLabel>Organization</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -236,7 +272,7 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {isMerchant && (
+        {isMerchant && !isAdmin && (
           <SidebarGroup>
             <SidebarGroupLabel>Merchant</SidebarGroupLabel>
             <SidebarGroupContent>
@@ -254,7 +290,7 @@ export function AppSidebar() {
           </SidebarGroup>
         )}
 
-        {!isBusiness && (
+        {!isBusiness && !isAdmin && (
           <SidebarGroup>
             <SidebarGroupLabel>Upgrade</SidebarGroupLabel>
             <SidebarGroupContent>

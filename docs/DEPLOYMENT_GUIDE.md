@@ -238,7 +238,7 @@ Create these products in Stripe Dashboard:
   - Annual: R960/year (R80/month effective)
 
 #### Pro Plan
-- **Product Name**: SlipSafe Business Team
+- **Product Name**: SlipSafe Business Pro
 - **Prices**:
   - Monthly: R269/month (recurring)
   - Annual: R2,748/year (R229/month effective)
@@ -523,7 +523,7 @@ DEBUG=* npm run dev
 ### Support
 
 - **Email**: Support@slip-safe.net
-- **Enterprise**: enterprise@slipsafe.com
+- **Enterprise**: enterprise@slip-safe.net
 
 ---
 

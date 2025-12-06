@@ -35,6 +35,36 @@ Preferred communication style: Simple, everyday language.
   - **Integrated Portal** (`/merchant-portal`): For main app users with `merchant_admin` or `merchant_staff` roles, accessible via sidebar without separate login.
   - Both portals support claim verification via QR code scanning or manual entry, refund processing, and verification history. Includes fraud detection and audit trail.
 - **Security**: Session-based authentication with `passport-local`, rate limiting, and 1-hour expiring, single-use password reset tokens. "Stay logged in" option extends session from 7 to 30 days.
+- **Admin Role Restrictions**: Admin accounts (role: 'admin' or 'support') are support-only and cannot access user features:
+  - Sidebar hides all user navigation (Upload, Receipts, Claims, Reports, Settings, Profile)
+  - Admin login redirects to `/admin` instead of home page
+  - `blockAdminAccess` middleware returns 403 on all user-specific API routes
+  - Context switching disabled for admins (no personal/business mode)
+- **Admin Support Tools** (`/admin`): Comprehensive admin dashboard with tabbed interface:
+  - **Overview Tab**: System statistics (users, receipts, claims, active users), quick actions, system status
+  - **Users Tab**: Search/filter users, view detailed user profiles (with receipts/claims counts), action buttons for:
+    - Send password reset email (triggers email flow, doesn't set password directly)
+    - Unlock account (clears rate limits for failed logins)
+    - Verify email manually (for users who can't receive verification emails)
+    - Change account type (individual ↔ business)
+  - **Organizations Tab**: Search/view organizations, view membership details, remove members, transfer ownership
+  - **Activity Log Tab**: Enhanced filtering by user and action type, includes admin action types
+  - **API Endpoints**: All protected with `isAuthenticated` and `isAdmin` middleware:
+    - `GET /api/admin/users` (with search/pagination)
+    - `GET /api/admin/users/:userId` (detailed user info)
+    - `POST /api/admin/users/:userId/password-reset`
+    - `POST /api/admin/users/:userId/unlock`
+    - `POST /api/admin/users/:userId/verify-email`
+    - `PATCH /api/admin/users/:userId/account-type`
+    - `GET /api/admin/organizations` (with search/pagination)
+    - `GET /api/admin/organizations/:organizationId`
+    - `POST /api/admin/organizations/:organizationId/transfer-ownership`
+    - `DELETE /api/admin/organizations/:organizationId/members/:userId`
+    - `PATCH /api/admin/organizations/:organizationId/members/:userId/role`
+- **Session-Based Context**: User context (personal/business mode) is stored per-session to prevent cross-device conflicts:
+  - Each browser/device maintains independent context
+  - `getSessionContext(req, user)` helper prioritizes session over stored user preference
+  - Prevents data integrity issues when same user is logged in from multiple devices
 - **Email Verification**: Registration requires email verification before login, with tokens expiring after 24 hours.
 - **Email System**: Integrates with Resend for professional HTML email delivery for verification, welcome, and account recovery.
 - **Context Switching**: Business accounts can toggle between personal and business modes to manage receipts separately.

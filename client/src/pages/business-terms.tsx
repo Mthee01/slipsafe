@@ -58,7 +58,7 @@ export default function BusinessTerms() {
                   <h2 className="text-lg font-semibold mb-3" data-testid="section-eligibility">3. Eligibility and Scope</h2>
                   <ul className="space-y-2 text-muted-foreground list-disc pl-5">
                     <li>The SlipSafe Free plan is intended for personal, non-commercial use only. Users may not use the Free plan for business purposes.</li>
-                    <li>Business plans (Business Solo, Business Team, and Enterprise) are designed for SMMEs, freelancers, sole traders, and business entities that require business-specific features.</li>
+                    <li>Business plans (Business Solo, Business Pro, and Enterprise) are designed for SMMEs, freelancers, sole traders, and business entities that require business-specific features.</li>
                     <li>The Customer is responsible for ensuring that SlipSafe is suitable for their specific reporting, tax, VAT, and compliance requirements. SlipSafe is a management tool and does not provide legal, tax, or accounting advice.</li>
                     <li>By subscribing to a Business plan, the Customer confirms that they have the authority to enter into this agreement on behalf of their business entity.</li>
                   </ul>
@@ -79,7 +79,7 @@ export default function BusinessTerms() {
                 <section>
                   <h2 className="text-lg font-semibold mb-3" data-testid="section-changes">5. Upgrades, Downgrades and Plan Changes</h2>
                   <ul className="space-y-2 text-muted-foreground list-disc pl-5">
-                    <li>Customers may upgrade from Business Solo to Business Team or Enterprise at any time. Upgraded pricing takes effect from the next billing cycle.</li>
+                    <li>Customers may upgrade from Business Solo to Business Pro or Enterprise at any time. Upgraded pricing takes effect from the next billing cycle.</li>
                     <li>If the Customer's usage exceeds the limits of their current plan, SlipSafe may notify the Customer and recommend an upgrade to a higher-tier plan.</li>
                     <li>Downgrades are permitted with reasonable notice, provided the Customer's usage fits within the limits of the new plan. Any unused prepaid amounts are non-refundable unless otherwise stated.</li>
                     <li>Plan changes made during a billing cycle will be reflected in the next billing period.</li>
@@ -90,7 +90,7 @@ export default function BusinessTerms() {
                   <h2 className="text-lg font-semibold mb-3" data-testid="section-limits">6. Fair Use and Limits</h2>
                   <ul className="space-y-2 text-muted-foreground list-disc pl-5">
                     <li><strong>Business Solo:</strong> Designed for sole traders and one-person businesses. Limited to 1 user and up to 1,000 business receipts per month.</li>
-                    <li><strong>Business Team:</strong> Designed for teams of 2-10 users with up to 5,000 business receipts per month. Additional users above 10 may be available at an additional cost per user per month.</li>
+                    <li><strong>Business Pro:</strong> Designed for teams of 2-10 users with up to 5,000 business receipts per month. Additional users above 10 may be available at an additional cost per user per month.</li>
                     <li><strong>Enterprise:</strong> Custom pricing and limits for organisations requiring more than 5,000 receipts per month or more than 10 users. Contact SlipSafe for a tailored solution.</li>
                     <li>Exceeding the receipt or user limits of your plan may require an upgrade to a higher-tier plan or Enterprise arrangement.</li>
                     <li>SlipSafe reserves the right to apply fair-use measures to protect platform stability and ensure service quality for all users.</li>

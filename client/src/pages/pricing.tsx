@@ -3,9 +3,13 @@ import { useLocation, Link } from "wouter";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { TermsModal } from "@/components/terms-modal";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Sidebar,
   SidebarContent,
@@ -31,7 +35,6 @@ import {
   Building2, 
   Sparkles, 
   ArrowRight, 
-  ExternalLink, 
   Loader2, 
   ShieldCheck,
   Home,
@@ -41,7 +44,11 @@ import {
   Tag,
   HelpCircle,
   LayoutDashboard,
-  LogOut
+  LogOut,
+  Mail,
+  Phone,
+  User,
+  MessageSquare
 } from "lucide-react";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
@@ -182,12 +189,28 @@ function PricingContent() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
   const { user } = useAuth();
-  const [termsAccepted, setTermsAccepted] = useState(false);
+  const [showTermsModal, setShowTermsModal] = useState(false);
+  const [pendingPlanId, setPendingPlanId] = useState<PlanId | null>(null);
   const [selectedPlan, setSelectedPlan] = useState<PlanId | null>(null);
+  
+  // Enterprise modal state
+  const [showEnterpriseModal, setShowEnterpriseModal] = useState(false);
+  const [isSubmittingEnterprise, setIsSubmittingEnterprise] = useState(false);
+  const [enterpriseContact, setEnterpriseContact] = useState({
+    name: "",
+    email: "",
+    company: "",
+    phone: "",
+    teamSize: "",
+    message: "",
+  });
 
   const searchParams = new URLSearchParams(window.location.search);
   const success = searchParams.get("success");
   const canceled = searchParams.get("canceled");
+  const initCheckout = searchParams.get("initCheckout");
+  const planIdFromUrl = searchParams.get("planId") as PlanId | null;
+  const [checkoutInitiated, setCheckoutInitiated] = useState(false);
 
   useEffect(() => {
     if (success) {
@@ -206,6 +229,21 @@ function PricingContent() {
       window.history.replaceState({}, "", "/pricing");
     }
   }, [success, canceled, toast]);
+
+  // Auto-initiate checkout for newly registered business users
+  // The user object should be available immediately after registration as the mutation sets it in cache
+  useEffect(() => {
+    if (initCheckout === "true" && planIdFromUrl && !checkoutInitiated) {
+      // Wait for user to be available (should happen immediately after redirect from registration)
+      if (user) {
+        setCheckoutInitiated(true);
+        window.history.replaceState({}, "", "/pricing");
+        // Show T&C modal for checkout
+        setPendingPlanId(planIdFromUrl);
+        setShowTermsModal(true);
+      }
+    }
+  }, [initCheckout, planIdFromUrl, user, checkoutInitiated]);
 
   const { data: subscription } = useQuery<SubscriptionData>({
     queryKey: ["/api/billing/subscription"],
@@ -237,21 +275,94 @@ function PricingContent() {
 
   const handleSubscribe = (planId: PlanId) => {
     if (!user) {
-      setLocation(`/login?redirect=/pricing&plan=${planId}`);
+      // Map pricing plan IDs to registration plan codes and billing intervals
+      const planMapping: Record<PlanId, { plan: string; interval: string }> = {
+        "solo-monthly": { plan: "BUSINESS_SOLO", interval: "monthly" },
+        "solo-annual": { plan: "BUSINESS_SOLO", interval: "annual" },
+        "pro-monthly": { plan: "BUSINESS_PRO", interval: "monthly" },
+        "pro-annual": { plan: "BUSINESS_PRO", interval: "annual" },
+      };
+      const { plan, interval } = planMapping[planId];
+      setLocation(`/register?accountType=business&plan=${plan}&interval=${interval}`);
       return;
     }
     
-    if (!termsAccepted) {
+    // For authenticated users, show T&C modal before checkout
+    setPendingPlanId(planId);
+    setShowTermsModal(true);
+  };
+
+  const handleTermsAccepted = () => {
+    if (pendingPlanId) {
+      setShowTermsModal(false);
+      setSelectedPlan(pendingPlanId);
+      checkoutMutation.mutate({ planId: pendingPlanId, termsAccepted: true });
+    }
+  };
+
+  const handleEnterpriseClick = () => {
+    // Pre-fill with user data if available
+    if (user) {
+      setEnterpriseContact({
+        name: user.fullName || "",
+        email: user.email || "",
+        company: user.businessName || "",
+        phone: user.phone || "",
+        teamSize: "",
+        message: "",
+      });
+    }
+    setShowEnterpriseModal(true);
+  };
+
+  const handleEnterpriseSubmit = async () => {
+    if (!enterpriseContact.name || !enterpriseContact.email || !enterpriseContact.company) {
       toast({
-        title: "Terms Required",
-        description: "Please accept the Business Pricing & Subscription Terms to continue.",
+        title: "Missing information",
+        description: "Please fill in your name, email, and company name.",
         variant: "destructive",
       });
       return;
     }
 
-    setSelectedPlan(planId);
-    checkoutMutation.mutate({ planId, termsAccepted });
+    setIsSubmittingEnterprise(true);
+    
+    try {
+      const response = await fetch("/api/enterprise-inquiry", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(enterpriseContact),
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.success) {
+        toast({
+          title: "Inquiry submitted",
+          description: "Thank you! Our team will contact you within 1-2 business days.",
+        });
+        setShowEnterpriseModal(false);
+        setEnterpriseContact({ name: "", email: "", company: "", phone: "", teamSize: "", message: "" });
+      } else {
+        // Show error if the server rejected the request - keep modal open for retry
+        toast({
+          title: "Submission failed",
+          description: data.error || "Unable to submit your inquiry. Please try again.",
+          variant: "destructive",
+        });
+        // Modal stays open so user can fix and retry
+      }
+    } catch {
+      // Network error - keep modal open for retry
+      toast({
+        title: "Connection error",
+        description: "Unable to reach the server. Please check your connection and try again.",
+        variant: "destructive",
+      });
+      // Modal stays open so user can retry when connection is restored
+    } finally {
+      setIsSubmittingEnterprise(false);
+    }
   };
 
   const currentPlan = subscription?.planType;
@@ -295,7 +406,7 @@ function PricingContent() {
     },
     {
       id: "pro",
-      name: "Business Team",
+      name: "Business Pro",
       description: "For teams of 2-10 people",
       monthlyPrice: 269,
       annualPrice: 229,
@@ -317,7 +428,7 @@ function PricingContent() {
       description: "Custom solutions for larger organisations",
       price: "Custom",
       features: [
-        "Everything in Team",
+        "Everything in Pro",
         "Unlimited receipts",
         "Unlimited users",
         "Custom integrations",
@@ -429,7 +540,7 @@ function PricingContent() {
                     <Button 
                       className="w-full"
                       onClick={() => handleSubscribe("solo-monthly")}
-                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_solo")}
+                      disabled={checkoutMutation.isPending || (currentPlan === "business_solo")}
                       data-testid="button-solo-monthly"
                     >
                       {checkoutMutation.isPending && selectedPlan === "solo-monthly" ? (
@@ -441,7 +552,7 @@ function PricingContent() {
                       variant="outline"
                       className="w-full"
                       onClick={() => handleSubscribe("solo-annual")}
-                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_solo")}
+                      disabled={checkoutMutation.isPending || (currentPlan === "business_solo")}
                       data-testid="button-solo-annual"
                     >
                       {checkoutMutation.isPending && selectedPlan === "solo-annual" ? (
@@ -457,7 +568,7 @@ function PricingContent() {
                     <Button 
                       className="w-full"
                       onClick={() => handleSubscribe("pro-monthly")}
-                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_pro")}
+                      disabled={checkoutMutation.isPending || (currentPlan === "business_pro")}
                       data-testid="button-pro-monthly"
                     >
                       {checkoutMutation.isPending && selectedPlan === "pro-monthly" ? (
@@ -469,7 +580,7 @@ function PricingContent() {
                       variant="outline"
                       className="w-full"
                       onClick={() => handleSubscribe("pro-annual")}
-                      disabled={!termsAccepted || checkoutMutation.isPending || (currentPlan === "business_pro")}
+                      disabled={checkoutMutation.isPending || (currentPlan === "business_pro")}
                       data-testid="button-pro-annual"
                     >
                       {checkoutMutation.isPending && selectedPlan === "pro-annual" ? (
@@ -484,44 +595,17 @@ function PricingContent() {
                   <Button 
                     variant="outline" 
                     className="w-full"
-                    onClick={() => window.location.href = "mailto:enterprise@slipsafe.com?subject=Enterprise%20Inquiry"}
+                    onClick={handleEnterpriseClick}
                     data-testid="button-enterprise-contact"
                   >
                     Contact Us
-                    <ExternalLink className="ml-2 h-4 w-4" />
+                    <Mail className="ml-2 h-4 w-4" />
                   </Button>
                 )}
               </CardFooter>
             </Card>
           ))}
         </div>
-
-        <Card className="max-w-2xl mx-auto">
-          <CardContent className="p-6">
-            <div className="flex items-start gap-3">
-              <Checkbox 
-                id="terms"
-                checked={termsAccepted}
-                onCheckedChange={(checked) => setTermsAccepted(checked === true)}
-                data-testid="checkbox-terms"
-              />
-              <div className="grid gap-1.5 leading-none">
-                <label 
-                  htmlFor="terms" 
-                  className="text-sm font-medium leading-relaxed cursor-pointer"
-                >
-                  I have read and accept the{" "}
-                  <Link href="/terms/business" className="text-primary underline hover:no-underline">
-                    SlipSafe Business Pricing & Subscription Terms
-                  </Link>
-                </label>
-                <p className="text-xs text-muted-foreground">
-                  You must accept the terms before subscribing to a paid Business plan.
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
 
         <div className="text-center mt-12 space-y-4">
           <h3 className="text-lg font-semibold">Questions about our plans?</h3>
@@ -533,6 +617,143 @@ function PricingContent() {
           </p>
         </div>
       </div>
+
+      <TermsModal
+        open={showTermsModal}
+        onOpenChange={setShowTermsModal}
+        onAccept={handleTermsAccepted}
+        isLoading={checkoutMutation.isPending}
+      />
+
+      {/* Enterprise Contact Modal */}
+      <Dialog open={showEnterpriseModal} onOpenChange={setShowEnterpriseModal}>
+        <DialogContent className="sm:max-w-[500px]">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Building2 className="h-5 w-5 text-primary" />
+              Enterprise Inquiry
+            </DialogTitle>
+            <DialogDescription>
+              Tell us about your organisation and we'll get back to you within 1-2 business days.
+            </DialogDescription>
+          </DialogHeader>
+          
+          <div className="space-y-4 py-4">
+            <div className="space-y-2">
+              <Label htmlFor="enterprise-name" className="flex items-center gap-2">
+                <User className="h-4 w-4 text-muted-foreground" />
+                Full Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="enterprise-name"
+                placeholder="Your name"
+                value={enterpriseContact.name}
+                onChange={(e) => setEnterpriseContact({ ...enterpriseContact, name: e.target.value })}
+                data-testid="input-enterprise-name"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="enterprise-email" className="flex items-center gap-2">
+                <Mail className="h-4 w-4 text-muted-foreground" />
+                Email <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="enterprise-email"
+                type="email"
+                placeholder="your.email@company.com"
+                value={enterpriseContact.email}
+                onChange={(e) => setEnterpriseContact({ ...enterpriseContact, email: e.target.value })}
+                data-testid="input-enterprise-email"
+              />
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="enterprise-company" className="flex items-center gap-2">
+                <Building2 className="h-4 w-4 text-muted-foreground" />
+                Company Name <span className="text-destructive">*</span>
+              </Label>
+              <Input
+                id="enterprise-company"
+                placeholder="Your company name"
+                value={enterpriseContact.company}
+                onChange={(e) => setEnterpriseContact({ ...enterpriseContact, company: e.target.value })}
+                data-testid="input-enterprise-company"
+              />
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4">
+              <div className="space-y-2">
+                <Label htmlFor="enterprise-phone" className="flex items-center gap-2">
+                  <Phone className="h-4 w-4 text-muted-foreground" />
+                  Phone
+                </Label>
+                <Input
+                  id="enterprise-phone"
+                  placeholder="+27 XX XXX XXXX"
+                  value={enterpriseContact.phone}
+                  onChange={(e) => setEnterpriseContact({ ...enterpriseContact, phone: e.target.value })}
+                  data-testid="input-enterprise-phone"
+                />
+              </div>
+              
+              <div className="space-y-2">
+                <Label htmlFor="enterprise-team-size" className="flex items-center gap-2">
+                  <Users className="h-4 w-4 text-muted-foreground" />
+                  Team Size
+                </Label>
+                <Input
+                  id="enterprise-team-size"
+                  placeholder="e.g. 50-100"
+                  value={enterpriseContact.teamSize}
+                  onChange={(e) => setEnterpriseContact({ ...enterpriseContact, teamSize: e.target.value })}
+                  data-testid="input-enterprise-team-size"
+                />
+              </div>
+            </div>
+            
+            <div className="space-y-2">
+              <Label htmlFor="enterprise-message" className="flex items-center gap-2">
+                <MessageSquare className="h-4 w-4 text-muted-foreground" />
+                Message
+              </Label>
+              <Textarea
+                id="enterprise-message"
+                placeholder="Tell us about your needs..."
+                value={enterpriseContact.message}
+                onChange={(e) => setEnterpriseContact({ ...enterpriseContact, message: e.target.value })}
+                className="min-h-[100px]"
+                data-testid="input-enterprise-message"
+              />
+            </div>
+          </div>
+          
+          <DialogFooter>
+            <Button
+              variant="outline"
+              onClick={() => setShowEnterpriseModal(false)}
+              disabled={isSubmittingEnterprise}
+              data-testid="button-enterprise-cancel"
+            >
+              Cancel
+            </Button>
+            <Button
+              onClick={handleEnterpriseSubmit}
+              disabled={isSubmittingEnterprise}
+              data-testid="button-enterprise-submit"
+            >
+              {isSubmittingEnterprise ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                  Submitting...
+                </>
+              ) : (
+                "Submit Inquiry"
+              )}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

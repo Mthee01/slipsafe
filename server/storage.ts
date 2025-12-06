@@ -62,6 +62,7 @@ export interface IStorage {
   getAllUsers(): Promise<User[]>;
   updateUserRole(userId: string, role: string): Promise<User | undefined>;
   updateUserMerchantId(userId: string, merchantId: string | null): Promise<User | undefined>;
+  updateUser(userId: string, updates: Partial<User>): Promise<User | undefined>;
   
   // Admin methods with pagination
   getUserActivity(userId: string, page: number, limit: number): Promise<{ activities: UserActivity[]; total: number; page: number; limit: number; totalPages: number }>;
@@ -656,6 +657,14 @@ export class DatabaseStorage implements IStorage {
     return user;
   }
 
+  async updateUser(userId: string, updates: Partial<User>): Promise<User | undefined> {
+    const [user] = await db.update(users)
+      .set(updates)
+      .where(eq(users.id, userId))
+      .returning();
+    return user;
+  }
+
   async getUserActivity(userId: string, page: number, limit: number): Promise<{ activities: UserActivity[]; total: number; page: number; limit: number; totalPages: number }> {
     const offset = (page - 1) * limit;
     
@@ -963,6 +972,41 @@ export class DatabaseStorage implements IStorage {
   }
 
   // Organization management
+  async getAllOrganizations(page: number = 1, limit: number = 50, search?: string): Promise<{ organizations: Organization[]; total: number; page: number; limit: number; totalPages: number }> {
+    const offset = (page - 1) * limit;
+    
+    let conditions: any[] = [];
+    if (search) {
+      conditions.push(
+        or(
+          sql`${organizations.name} ILIKE ${'%' + search + '%'}`,
+          sql`${organizations.billingEmail} ILIKE ${'%' + search + '%'}`
+        )
+      );
+    }
+    
+    const whereClause = conditions.length > 0 ? and(...conditions) : undefined;
+    
+    const result = await db.select()
+      .from(organizations)
+      .where(whereClause)
+      .orderBy(desc(organizations.createdAt))
+      .limit(limit)
+      .offset(offset);
+    
+    const [{ totalCount }] = await db.select({ totalCount: count() })
+      .from(organizations)
+      .where(whereClause);
+    
+    return {
+      organizations: result,
+      total: totalCount,
+      page,
+      limit,
+      totalPages: Math.ceil(totalCount / limit)
+    };
+  }
+
   async createOrganization(org: InsertOrganization): Promise<Organization> {
     const [created] = await db.insert(organizations).values(org).returning();
     return created;

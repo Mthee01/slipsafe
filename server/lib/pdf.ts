@@ -8,6 +8,11 @@ export interface ExpenseReportData {
     startDate?: string;
     endDate?: string;
   };
+  filters?: {
+    category: string;
+    vendor: string;
+    groupBy: "none" | "vendor" | "month";
+  };
   summary: {
     totalReceipts: number;
     totalSpent: number;
@@ -45,7 +50,10 @@ export interface ExpenseReportData {
   }>;
 }
 
+export type GroupBy = "none" | "vendor" | "month";
+
 export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDocument {
+  const groupBy = data.filters?.groupBy || "none";
   const doc = new PDFDocument({
     size: 'A4',
     margins: {
@@ -75,7 +83,7 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
   
   doc.fontSize(14)
      .fillColor('#666')
-     .text('Tax & Expense Report', { align: 'center' });
+     .text('Expense Report', { align: 'center' });
   
   doc.moveDown(1.5);
 
@@ -114,6 +122,22 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
      .fillColor('#000')
      .text(periodText, 350, boxY + 15, { width: 180, align: 'right' });
   
+  // Add filter information if filters are applied
+  if (data.filters) {
+    let filterY = boxY + 35;
+    if (data.filters.category !== 'all') {
+      doc.fontSize(8)
+         .fillColor('#666')
+         .text(`Category: ${data.filters.category}`, 350, filterY, { width: 180, align: 'right' });
+      filterY += 12;
+    }
+    if (data.filters.vendor !== 'all') {
+      doc.fontSize(8)
+         .fillColor('#666')
+         .text(`Vendor: ${data.filters.vendor}`, 350, filterY, { width: 180, align: 'right' });
+    }
+  }
+  
   doc.y = boxY + 80;
 
   // Summary Section
@@ -124,14 +148,13 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
   doc.moveDown(0.5);
   
   // Summary cards in a row
-  const cardWidth = (pageWidth - 30) / 4;
+  const cardWidth = (pageWidth - 20) / 3;
   const cardY = doc.y;
   const cardHeight = 50;
   
   const summaryCards = [
     { label: 'Total Receipts', value: data.summary.totalReceipts.toString(), color: '#4f46e5' },
     { label: 'Total Spent', value: formatCurrency(data.summary.totalSpent), color: '#0ea5e9' },
-    { label: 'Total Tax', value: formatCurrency(data.summary.totalTax), color: '#f59e0b' },
     { label: 'Total VAT', value: formatCurrency(data.summary.totalVat), color: '#10b981' },
   ];
   
@@ -151,8 +174,8 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
   
   doc.y = cardY + cardHeight + 20;
 
-  // Category Breakdown Section
-  if (data.byCategory.length > 0) {
+  // Category Breakdown Section - show when groupBy is "none"
+  if (groupBy === "none" && data.byCategory.length > 0) {
     doc.fontSize(14)
        .fillColor('#4f46e5')
        .text('Expenses by Category', 40);
@@ -166,11 +189,10 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     
     doc.fontSize(9)
        .fillColor('#fff');
-    doc.text('Category', 45, tableY + 6, { width: 120 });
-    doc.text('Count', 170, tableY + 6, { width: 50, align: 'right' });
-    doc.text('Total', 230, tableY + 6, { width: 90, align: 'right' });
-    doc.text('Tax', 330, tableY + 6, { width: 90, align: 'right' });
-    doc.text('VAT', 430, tableY + 6, { width: 90, align: 'right' });
+    doc.text('Category', 45, tableY + 6, { width: 150 });
+    doc.text('Count', 200, tableY + 6, { width: 60, align: 'right' });
+    doc.text('Total', 270, tableY + 6, { width: 120, align: 'right' });
+    doc.text('VAT', 400, tableY + 6, { width: 110, align: 'right' });
     
     doc.y = tableY + 20;
     
@@ -182,11 +204,10 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
       
       doc.fontSize(9)
          .fillColor('#333');
-      doc.text(cat.name, 45, rowY + 5, { width: 120 });
-      doc.text(cat.count.toString(), 170, rowY + 5, { width: 50, align: 'right' });
-      doc.text(formatCurrency(cat.total), 230, rowY + 5, { width: 90, align: 'right' });
-      doc.fillColor('#f59e0b').text(formatCurrency(cat.tax), 330, rowY + 5, { width: 90, align: 'right' });
-      doc.fillColor('#10b981').text(formatCurrency(cat.vat), 430, rowY + 5, { width: 90, align: 'right' });
+      doc.text(cat.name, 45, rowY + 5, { width: 150 });
+      doc.text(cat.count.toString(), 200, rowY + 5, { width: 60, align: 'right' });
+      doc.text(formatCurrency(cat.total), 270, rowY + 5, { width: 120, align: 'right' });
+      doc.fillColor('#10b981').text(formatCurrency(cat.vat), 400, rowY + 5, { width: 110, align: 'right' });
       
       doc.y = rowY + 18;
     });
@@ -194,8 +215,8 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     doc.moveDown(1);
   }
 
-  // Vendor Breakdown Section
-  if (data.byMerchant.length > 0) {
+  // Vendor Breakdown Section - show when groupBy is "vendor"
+  if (groupBy === "vendor" && data.byMerchant.length > 0) {
     // Check if we need a new page
     if (doc.y > 650) {
       doc.addPage();
@@ -214,11 +235,10 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     
     doc.fontSize(9)
        .fillColor('#fff');
-    doc.text('Vendor', 45, tableY + 6, { width: 120 });
-    doc.text('Count', 170, tableY + 6, { width: 50, align: 'right' });
-    doc.text('Total', 230, tableY + 6, { width: 90, align: 'right' });
-    doc.text('Tax', 330, tableY + 6, { width: 90, align: 'right' });
-    doc.text('VAT', 430, tableY + 6, { width: 90, align: 'right' });
+    doc.text('Vendor', 45, tableY + 6, { width: 150 });
+    doc.text('Count', 200, tableY + 6, { width: 60, align: 'right' });
+    doc.text('Total', 270, tableY + 6, { width: 120, align: 'right' });
+    doc.text('VAT', 400, tableY + 6, { width: 110, align: 'right' });
     
     doc.y = tableY + 20;
     
@@ -231,11 +251,10 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
       
       doc.fontSize(9)
          .fillColor('#333');
-      doc.text(merchant.name.substring(0, 25), 45, rowY + 5, { width: 120 });
-      doc.text(merchant.count.toString(), 170, rowY + 5, { width: 50, align: 'right' });
-      doc.text(formatCurrency(merchant.total), 230, rowY + 5, { width: 90, align: 'right' });
-      doc.fillColor('#f59e0b').text(formatCurrency(merchant.tax), 330, rowY + 5, { width: 90, align: 'right' });
-      doc.fillColor('#10b981').text(formatCurrency(merchant.vat), 430, rowY + 5, { width: 90, align: 'right' });
+      doc.text(merchant.name.substring(0, 30), 45, rowY + 5, { width: 150 });
+      doc.text(merchant.count.toString(), 200, rowY + 5, { width: 60, align: 'right' });
+      doc.text(formatCurrency(merchant.total), 270, rowY + 5, { width: 120, align: 'right' });
+      doc.fillColor('#10b981').text(formatCurrency(merchant.vat), 400, rowY + 5, { width: 110, align: 'right' });
       
       doc.y = rowY + 18;
     });
@@ -250,8 +269,8 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     doc.moveDown(1);
   }
 
-  // Monthly Breakdown Section
-  if (data.byMonth.length > 0) {
+  // Monthly Breakdown Section - show when groupBy is "month"
+  if (groupBy === "month" && data.byMonth.length > 0) {
     // Check if we need a new page
     if (doc.y > 600) {
       doc.addPage();
@@ -270,11 +289,10 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     
     doc.fontSize(9)
        .fillColor('#fff');
-    doc.text('Month', 45, tableY + 6, { width: 120 });
-    doc.text('Receipts', 170, tableY + 6, { width: 50, align: 'right' });
-    doc.text('Total', 230, tableY + 6, { width: 90, align: 'right' });
-    doc.text('Tax', 330, tableY + 6, { width: 90, align: 'right' });
-    doc.text('VAT', 430, tableY + 6, { width: 90, align: 'right' });
+    doc.text('Month', 45, tableY + 6, { width: 150 });
+    doc.text('Receipts', 200, tableY + 6, { width: 60, align: 'right' });
+    doc.text('Total', 270, tableY + 6, { width: 120, align: 'right' });
+    doc.text('VAT', 400, tableY + 6, { width: 110, align: 'right' });
     
     doc.y = tableY + 20;
     
@@ -286,11 +304,10 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
       
       doc.fontSize(9)
          .fillColor('#333');
-      doc.text(formatMonth(month.month), 45, rowY + 5, { width: 120 });
-      doc.text(month.count.toString(), 170, rowY + 5, { width: 50, align: 'right' });
-      doc.text(formatCurrency(month.total), 230, rowY + 5, { width: 90, align: 'right' });
-      doc.fillColor('#f59e0b').text(formatCurrency(month.tax), 330, rowY + 5, { width: 90, align: 'right' });
-      doc.fillColor('#10b981').text(formatCurrency(month.vat), 430, rowY + 5, { width: 90, align: 'right' });
+      doc.text(formatMonth(month.month), 45, rowY + 5, { width: 150 });
+      doc.text(month.count.toString(), 200, rowY + 5, { width: 60, align: 'right' });
+      doc.text(formatCurrency(month.total), 270, rowY + 5, { width: 120, align: 'right' });
+      doc.fillColor('#10b981').text(formatCurrency(month.vat), 400, rowY + 5, { width: 110, align: 'right' });
       
       doc.y = rowY + 18;
     });
@@ -298,7 +315,7 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     doc.moveDown(1);
   }
 
-  // Transaction Details Section (if included)
+  // Transaction Details Section (always included if transactions are provided)
   if (data.transactions && data.transactions.length > 0) {
     doc.addPage();
     
@@ -315,12 +332,11 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
     
     doc.fontSize(8)
        .fillColor('#fff');
-    doc.text('Date', 45, tableY + 6, { width: 70 });
-    doc.text('Merchant', 120, tableY + 6, { width: 100 });
-    doc.text('Category', 225, tableY + 6, { width: 80 });
-    doc.text('Total', 310, tableY + 6, { width: 70, align: 'right' });
-    doc.text('Tax', 390, tableY + 6, { width: 60, align: 'right' });
-    doc.text('VAT', 460, tableY + 6, { width: 60, align: 'right' });
+    doc.text('Date', 45, tableY + 6, { width: 80 });
+    doc.text('Merchant', 130, tableY + 6, { width: 130 });
+    doc.text('Category', 265, tableY + 6, { width: 100 });
+    doc.text('Total', 370, tableY + 6, { width: 80, align: 'right' });
+    doc.text('VAT', 455, tableY + 6, { width: 70, align: 'right' });
     
     doc.y = tableY + 20;
     
@@ -335,12 +351,11 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
         
         doc.fontSize(8)
            .fillColor('#fff');
-        doc.text('Date', 45, tableY + 6, { width: 70 });
-        doc.text('Merchant', 120, tableY + 6, { width: 100 });
-        doc.text('Category', 225, tableY + 6, { width: 80 });
-        doc.text('Total', 310, tableY + 6, { width: 70, align: 'right' });
-        doc.text('Tax', 390, tableY + 6, { width: 60, align: 'right' });
-        doc.text('VAT', 460, tableY + 6, { width: 60, align: 'right' });
+        doc.text('Date', 45, tableY + 6, { width: 80 });
+        doc.text('Merchant', 130, tableY + 6, { width: 130 });
+        doc.text('Category', 265, tableY + 6, { width: 100 });
+        doc.text('Total', 370, tableY + 6, { width: 80, align: 'right' });
+        doc.text('VAT', 455, tableY + 6, { width: 70, align: 'right' });
         
         doc.y = tableY + 20;
       }
@@ -351,12 +366,11 @@ export function generateExpenseReportPDF(data: ExpenseReportData): PDFKit.PDFDoc
       
       doc.fontSize(8)
          .fillColor('#333');
-      doc.text(formatDate(txn.date), 45, rowY + 4, { width: 70 });
-      doc.text(txn.merchant.substring(0, 20), 120, rowY + 4, { width: 100 });
-      doc.text(txn.category, 225, rowY + 4, { width: 80 });
-      doc.text(formatCurrency(txn.total), 310, rowY + 4, { width: 70, align: 'right' });
-      doc.fillColor('#f59e0b').text(formatCurrency(txn.tax), 390, rowY + 4, { width: 60, align: 'right' });
-      doc.fillColor('#10b981').text(formatCurrency(txn.vat), 460, rowY + 4, { width: 60, align: 'right' });
+      doc.text(formatDate(txn.date), 45, rowY + 4, { width: 80 });
+      doc.text(txn.merchant.substring(0, 25), 130, rowY + 4, { width: 130 });
+      doc.text(txn.category, 265, rowY + 4, { width: 100 });
+      doc.text(formatCurrency(txn.total), 370, rowY + 4, { width: 80, align: 'right' });
+      doc.fillColor('#10b981').text(formatCurrency(txn.vat), 455, rowY + 4, { width: 70, align: 'right' });
       
       doc.y = rowY + 16;
     });

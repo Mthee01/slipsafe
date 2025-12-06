@@ -64,11 +64,12 @@ export function useAuth() {
       queryClient.setQueryData(["/api/users/me"], data.user);
       queryClient.invalidateQueries({ queryKey: ["/api/purchases"] });
       queryClient.invalidateQueries({ queryKey: ["/api/settings"] });
-      setLocation("/");
+      const isAdmin = data.user?.role === "admin" || data.user?.role === "support";
+      setLocation(isAdmin ? "/admin" : "/");
     }
   });
 
-  const registerMutation = useMutation<AuthResponse & { requiresVerification?: boolean; message?: string }, Error, {
+  const registerMutation = useMutation<AuthResponse & { requiresVerification?: boolean; message?: string; checkoutRedirect?: { planId: string; billingInterval: string } | null }, Error, {
     username: string;
     fullName: string;
     email: string;
@@ -80,6 +81,8 @@ export function useAuth() {
     businessName?: string;
     taxId?: string;
     vatNumber?: string;
+    selectedPlan?: "BUSINESS_SOLO" | "BUSINESS_PRO" | "BUSINESS_ENTERPRISE";
+    billingInterval?: "monthly" | "annual";
   }>({
     mutationFn: async (data) => {
       const response = await apiRequest("POST", "/api/auth/register", data);
@@ -88,7 +91,13 @@ export function useAuth() {
     onSuccess: (data) => {
       if (data.user) {
         queryClient.setQueryData(["/api/users/me"], data.user);
-        setLocation("/");
+        
+        // If business user with checkout redirect, go to pricing to complete subscription
+        if (data.checkoutRedirect) {
+          setLocation(`/pricing?initCheckout=true&planId=${data.checkoutRedirect.planId}`);
+        } else {
+          setLocation("/");
+        }
       } else if (data.requiresVerification) {
         setLocation("/registration-success");
       }

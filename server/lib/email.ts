@@ -487,3 +487,79 @@ export function generateWelcomeEmail(
 </html>
   `.trim();
 }
+
+export function generateEnterpriseInquiryEmail(inquiry: {
+  name: string;
+  email: string;
+  company: string;
+  phone?: string;
+  teamSize?: string;
+  message?: string;
+}): string {
+  return `
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>New Enterprise Inquiry - SlipSafe</title>
+</head>
+<body style="margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif; background-color: #f4f4f5;">
+  <table width="100%" cellpadding="0" cellspacing="0" style="background-color: #f4f4f5; padding: 40px 20px;">
+    <tr>
+      <td align="center">
+        <table width="100%" max-width="600" cellpadding="0" cellspacing="0" style="background-color: #ffffff; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); max-width: 600px;">
+          <!-- Header -->
+          <tr>
+            <td style="background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%); padding: 32px; border-radius: 8px 8px 0 0; text-align: center;">
+              <h1 style="color: #ffffff; margin: 0; font-size: 28px; font-weight: 700;">SlipSafe</h1>
+              <p style="color: #e0e7ff; margin: 8px 0 0 0; font-size: 14px;">New Enterprise Inquiry</p>
+            </td>
+          </tr>
+          
+          <!-- Content -->
+          <tr>
+            <td style="padding: 40px 32px;">
+              <h2 style="color: #18181b; margin: 0 0 16px 0; font-size: 20px; font-weight: 600;">New Enterprise Lead</h2>
+              <p style="color: #52525b; margin: 0 0 24px 0; font-size: 16px; line-height: 1.6;">
+                A potential enterprise customer has submitted an inquiry:
+              </p>
+              
+              <!-- Contact Details Box -->
+              <div style="background: linear-gradient(135deg, #f0f9ff 0%, #e0f2fe 100%); border: 2px solid #4f46e5; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #18181b; margin: 0 0 8px 0; font-size: 16px;"><strong>Name:</strong> ${inquiry.name}</p>
+                <p style="color: #18181b; margin: 0 0 8px 0; font-size: 16px;"><strong>Email:</strong> <a href="mailto:${inquiry.email}" style="color: #4f46e5;">${inquiry.email}</a></p>
+                <p style="color: #18181b; margin: 0 0 8px 0; font-size: 16px;"><strong>Company:</strong> ${inquiry.company}</p>
+                ${inquiry.phone ? `<p style="color: #18181b; margin: 0 0 8px 0; font-size: 16px;"><strong>Phone:</strong> <a href="tel:${inquiry.phone}" style="color: #4f46e5;">${inquiry.phone}</a></p>` : ''}
+                ${inquiry.teamSize ? `<p style="color: #18181b; margin: 0 0 8px 0; font-size: 16px;"><strong>Expected Team Size:</strong> ${inquiry.teamSize}</p>` : ''}
+              </div>
+              
+              ${inquiry.message ? `
+              <div style="background: #f4f4f5; border-radius: 8px; padding: 20px; margin: 24px 0;">
+                <p style="color: #71717a; margin: 0 0 8px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Additional Information</p>
+                <p style="color: #18181b; margin: 0; font-size: 15px; line-height: 1.6;">${inquiry.message}</p>
+              </div>
+              ` : ''}
+              
+              <p style="color: #71717a; margin: 24px 0 0 0; font-size: 14px; line-height: 1.6;">
+                Please follow up with this lead within 1-2 business days.
+              </p>
+            </td>
+          </tr>
+          
+          <!-- Footer -->
+          <tr>
+            <td style="padding: 24px 32px; border-top: 1px solid #e4e4e7; text-align: center;">
+              <p style="color: #a1a1aa; margin: 0; font-size: 12px;">
+                This is an automated message from SlipSafe. Inquiry received at ${new Date().toISOString()}.
+              </p>
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
+  `.trim();
+}

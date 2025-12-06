@@ -78,6 +78,8 @@ export const registerSchema = z.object({
   businessAddress: z.string().optional(),
   businessPhone: z.string().optional(),
   businessEmail: z.string().optional(),
+  selectedPlan: z.enum(["BUSINESS_SOLO", "BUSINESS_PRO", "BUSINESS_ENTERPRISE"]).optional(),
+  billingInterval: z.enum(["monthly", "annual"]).optional(),
 }).superRefine((data, ctx) => {
   if (data.accountType === "business") {
     if (!data.businessName || data.businessName.trim() === "") {
@@ -87,11 +89,11 @@ export const registerSchema = z.object({
         path: ["businessName"],
       });
     }
-    if (!data.taxId || data.taxId.trim() === "") {
+    if (!data.selectedPlan) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Tax ID is required for business accounts",
-        path: ["taxId"],
+        message: "Please select a subscription plan",
+        path: ["selectedPlan"],
       });
     }
   }
@@ -179,19 +181,18 @@ export type InsertClient = z.infer<typeof insertClientSchema>;
 export type UpdateClient = z.infer<typeof updateClientSchema>;
 export type Client = typeof clients.$inferSelect;
 
-export const CATEGORIES = ["Electronics", "Clothing", "Home", "Auto", "Other"] as const;
+export const CATEGORIES = ["Electronics", "Clothing", "Home", "Auto", "Work Expense Claim", "Other"] as const;
 export type Category = typeof CATEGORIES[number];
 
 export const BUSINESS_CATEGORIES = [
-  "Office Supplies",
-  "Equipment",
-  "Travel",
-  "Utilities",
-  "Rent",
-  "Insurance",
+  "Rent & Utilities",
   "Professional Services",
-  "Marketing",
-  "Inventory",
+  "Office Supplies",
+  "Technology & Software",
+  "Marketing & Advertising",
+  "Travel & Transport",
+  "Maintenance & Repairs",
+  "Entertainment",
   "Other"
 ] as const;
 export type BusinessCategory = typeof BUSINESS_CATEGORIES[number];
@@ -423,6 +424,13 @@ export const ACTIVITY_TYPES = [
   "business_profile_update",
   "report_generated",
   "admin_role_change",
+  "admin_password_reset_triggered",
+  "admin_account_unlocked",
+  "admin_email_verified",
+  "admin_account_type_changed",
+  "admin_org_ownership_transferred",
+  "admin_org_member_removed",
+  "admin_org_member_role_changed",
 ] as const;
 export type ActivityType = typeof ACTIVITY_TYPES[number];
 
@@ -806,7 +814,7 @@ export function getPlanLimitsByCode(planCode: PlanCode): { maxUsers: number | nu
     case "BUSINESS_SOLO":
       return { maxUsers: 1, maxReceiptsPerMonth: 1000, name: "Business 1 (Solo)" };
     case "BUSINESS_PRO":
-      return { maxUsers: 10, maxReceiptsPerMonth: 5000, name: "Business Team (Pro)" };
+      return { maxUsers: 10, maxReceiptsPerMonth: 5000, name: "Business Pro" };
     case "BUSINESS_ENTERPRISE":
       return { maxUsers: null, maxReceiptsPerMonth: null, name: "Enterprise" };
   }
@@ -871,3 +879,29 @@ export function getPlanDetails(planId: PlanId): {
       };
   }
 }
+
+// Enterprise inquiries table
+export const enterpriseInquiries = pgTable("enterprise_inquiries", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  name: text("name").notNull(),
+  email: text("email").notNull(),
+  company: text("company").notNull(),
+  phone: text("phone"),
+  teamSize: text("team_size"),
+  message: text("message"),
+  status: text("status").notNull().default("pending"), // pending, contacted, converted, closed
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertEnterpriseInquirySchema = createInsertSchema(enterpriseInquiries).omit({
+  id: true,
+  status: true,
+  notes: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertEnterpriseInquiry = z.infer<typeof insertEnterpriseInquirySchema>;
+export type EnterpriseInquiry = typeof enterpriseInquiries.$inferSelect;

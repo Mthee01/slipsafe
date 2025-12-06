@@ -296,7 +296,7 @@ This project is proprietary software. All rights reserved.
 ## Support
 
 - **Email**: Support@slip-safe.net
-- **Enterprise Inquiries**: enterprise@slipsafe.com
+- **Enterprise Inquiries**: enterprise@slip-safe.net
 
 ---
 

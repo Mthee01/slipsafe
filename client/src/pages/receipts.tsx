@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -9,8 +9,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
 import { Search, Calendar, Store, Clock, Tag, ArrowRight, Filter, Sparkles, Info, Download, Coins, Eye, X, FileText, LayoutGrid, List } from "lucide-react";
-import { CATEGORIES, type Purchase, type ConfidenceLevel, type MerchantRule } from "@shared/schema";
+import { CATEGORIES, BUSINESS_CATEGORIES, type Purchase, type ConfidenceLevel, type MerchantRule } from "@shared/schema";
 import { Link } from "wouter";
 
 export default function Receipts() {
@@ -19,7 +20,15 @@ export default function Receipts() {
   const [viewingPdfId, setViewingPdfId] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<"cards" | "table">("cards");
   const { toast } = useToast();
+  const { user } = useAuth();
+  const isBusinessMode = user?.activeContext === 'business';
+  const activeCategories = isBusinessMode ? BUSINESS_CATEGORIES : CATEGORIES;
   const queryClient = useQueryClient();
+  
+  // Reset category filter to "all" when switching between personal/business modes
+  useEffect(() => {
+    setSelectedCategory("all");
+  }, [isBusinessMode]);
 
   const { data, isLoading } = useQuery<{ purchases: Purchase[] }>({
     queryKey: ["/api/purchases", { category: selectedCategory !== "all" ? selectedCategory : undefined, search: searchQuery || undefined }],
@@ -179,12 +188,23 @@ export default function Receipts() {
 
   const getCategoryColor = (category: string) => {
     const colors: Record<string, string> = {
+      // Personal categories
       Electronics: "bg-blue-500/10 text-blue-500 border-blue-500/20",
       Clothing: "bg-purple-500/10 text-purple-500 border-purple-500/20",
       Food: "bg-green-500/10 text-green-500 border-green-500/20",
       Home: "bg-orange-500/10 text-orange-500 border-orange-500/20",
       Health: "bg-red-500/10 text-red-500 border-red-500/20",
       Auto: "bg-gray-500/10 text-gray-500 border-gray-500/20",
+      "Work Expense Claim": "bg-amber-500/10 text-amber-500 border-amber-500/20",
+      // Business categories
+      "Rent & Utilities": "bg-indigo-500/10 text-indigo-500 border-indigo-500/20",
+      "Professional Services": "bg-violet-500/10 text-violet-500 border-violet-500/20",
+      "Office Supplies": "bg-cyan-500/10 text-cyan-500 border-cyan-500/20",
+      "Technology & Software": "bg-blue-600/10 text-blue-600 border-blue-600/20",
+      "Marketing & Advertising": "bg-pink-500/10 text-pink-500 border-pink-500/20",
+      "Travel & Transport": "bg-emerald-500/10 text-emerald-500 border-emerald-500/20",
+      "Maintenance & Repairs": "bg-orange-600/10 text-orange-600 border-orange-600/20",
+      "Entertainment": "bg-rose-500/10 text-rose-500 border-rose-500/20",
       Other: "bg-gray-400/10 text-gray-400 border-gray-400/20",
     };
     return colors[category] || colors.Other;
@@ -253,8 +273,8 @@ export default function Receipts() {
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="all" data-testid="option-all">All Categories</SelectItem>
-                {CATEGORIES.map((cat) => (
-                  <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}`}>
+                {activeCategories.map((cat) => (
+                  <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase().replace(/\s+/g, '-')}`}>
                     {cat}
                   </SelectItem>
                 ))}
@@ -425,8 +445,8 @@ export default function Receipts() {
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                {CATEGORIES.map((cat) => (
-                                  <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}-${purchase.id}`}>
+                                {activeCategories.map((cat) => (
+                                  <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase().replace(/\s+/g, '-')}-${purchase.id}`}>
                                     {cat}
                                   </SelectItem>
                                 ))}

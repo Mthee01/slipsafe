@@ -173,6 +173,10 @@ function AppContent() {
                   <Route path="/team" component={Team} />
                   <Route path="/upgrade-to-business" component={UpgradeToBusiness} />
                   <Route path="/admin" component={AdminDashboard} />
+                  <Route path="/admin/users" component={AdminDashboard} />
+                  <Route path="/admin/organizations" component={AdminDashboard} />
+                  <Route path="/admin/merchant-rules" component={AdminDashboard} />
+                  <Route path="/admin/activity" component={AdminDashboard} />
                   <Route path="/merchant" component={MerchantPortal} />
                   <Route path="/merchant-portal" component={IntegratedMerchantPortal} />
                   <Route path="/verify/:claimCode" component={MerchantPortal} />

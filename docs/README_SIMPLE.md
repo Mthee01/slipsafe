@@ -344,7 +344,7 @@ Yes, you can export receipts to CSV format which works with most accounting soft
 Need help? We're here for you.
 
 - **Email**: Support@slip-safe.net
-- **Business Enquiries**: enterprise@slipsafe.com
+- **Business Enquiries**: enterprise@slip-safe.net
 
 ---
 

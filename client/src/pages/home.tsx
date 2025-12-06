@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,7 +15,7 @@ import { useOnlineStatus } from "@/hooks/use-online-status";
 import { useImageQuality, type ImageQualityResult } from "@/hooks/use-image-quality";
 import { savePendingUpload, saveReceiptOffline } from "@/lib/indexedDB";
 import { Upload, FileText, Clock, Store, Calendar, X, Tag, Camera, Edit, Check, Sparkles, WifiOff, Flashlight, FlashlightOff, Focus, Info, CheckCircle, AlertTriangle, XCircle, Plus, RotateCcw, Mail, AlertCircle, Coins } from "lucide-react";
-import { CATEGORIES, type Purchase, type ConfidenceLevel, REFUND_TYPES } from "@shared/schema";
+import { CATEGORIES, BUSINESS_CATEGORIES, type Purchase, type ConfidenceLevel, REFUND_TYPES } from "@shared/schema";
 import { Progress } from "@/components/ui/progress";
 import {
   Dialog,
@@ -133,6 +133,12 @@ export default function Home() {
   const queryClient = useQueryClient();
   const { user } = useAuth();
   const isBusinessMode = user?.activeContext === 'business';
+  
+  // Reset category to "Other" when switching between personal/business modes
+  useEffect(() => {
+    setSelectedCategory("Other");
+  }, [isBusinessMode]);
+  
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
 
@@ -877,8 +883,8 @@ export default function Home() {
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        {CATEGORIES.map((cat) => (
-                          <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase()}`}>
+                        {(isBusinessMode ? BUSINESS_CATEGORIES : CATEGORIES).map((cat) => (
+                          <SelectItem key={cat} value={cat} data-testid={`option-${cat.toLowerCase().replace(/\s+/g, '-')}`}>
                             {cat}
                           </SelectItem>
                         ))}
@@ -925,8 +931,8 @@ export default function Home() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {CATEGORIES.map((cat) => (
-                        <SelectItem key={cat} value={cat} data-testid={`option-email-${cat.toLowerCase()}`}>
+                      {(isBusinessMode ? BUSINESS_CATEGORIES : CATEGORIES).map((cat) => (
+                        <SelectItem key={cat} value={cat} data-testid={`option-email-${cat.toLowerCase().replace(/\s+/g, '-')}`}>
                           {cat}
                         </SelectItem>
                       ))}

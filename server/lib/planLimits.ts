@@ -13,7 +13,7 @@ function getUpgradeRecommendation(currentPlanCode: PlanCode, limitType: PlanLimi
   if (currentPlanCode === "BUSINESS_SOLO") {
     return {
       recommendedPlanCode: "BUSINESS_PRO",
-      recommendedPlanName: "Business Team (Pro)",
+      recommendedPlanName: "Business Pro",
       reason: limitType === "members" 
         ? "You need more team members than your current plan allows."
         : "You are uploading more receipts than your current plan allows each month."

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -6,13 +6,16 @@ import { Label } from "@/components/ui/label";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { BarChart3, PieChart, TrendingUp, Receipt, Coins, Percent, Download, Calendar, Building2, UserCircle, Store, FileText, Loader2, RotateCcw, Shield, AlertTriangle, CheckCircle, Eye } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { BarChart3, PieChart, TrendingUp, Receipt, Coins, Download, Calendar, Building2, Store, FileText, Loader2, Eye, X, LayoutGrid, RotateCcw, Shield, AlertTriangle } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/hooks/use-auth";
 import { Progress } from "@/components/ui/progress";
 import { ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, Legend, Cell, PieChart as RechartsPieChart, Pie } from "recharts";
+import { BUSINESS_CATEGORIES } from "@shared/schema";
 
 interface PersonalReportSummary {
   totalReceipts: number;
@@ -486,9 +489,9 @@ function PersonalReportsDashboard() {
                     <Building2 className="h-6 w-6 text-indigo-500" />
                   </div>
                   <div>
-                    <h3 className="font-semibold">Need Tax & VAT Reports?</h3>
+                    <h3 className="font-semibold">Need VAT & Expense Reports?</h3>
                     <p className="text-sm text-muted-foreground">
-                      Upgrade to a business account for comprehensive tax reporting, VAT summaries, and PDF exports.
+                      Upgrade to a business account for comprehensive expense reporting, VAT summaries, and PDF exports.
                     </p>
                   </div>
                 </div>
@@ -506,17 +509,24 @@ function PersonalReportsDashboard() {
   );
 }
 
+type GroupBy = "none" | "vendor" | "month";
+
 export default function Reports() {
   const { user } = useAuth();
   const { toast } = useToast();
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
   const [isDownloadingPdf, setIsDownloadingPdf] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>("all");
+  const [selectedVendor, setSelectedVendor] = useState<string>("all");
+  const [groupBy, setGroupBy] = useState<GroupBy>("none");
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [pdfPreviewUrl, setPdfPreviewUrl] = useState("");
 
   const isBusinessAccount = user?.accountType === "business";
   const isBusinessContext = user?.activeContext === "business";
 
-  const { data, isLoading, refetch } = useQuery<ReportsResponse>({
+  const { data, isLoading, refetch, isFetching } = useQuery<ReportsResponse>({
     queryKey: ["/api/reports/summary", { startDate, endDate }],
     enabled: isBusinessAccount && isBusinessContext,
   });
@@ -528,15 +538,19 @@ export default function Reports() {
     return <PersonalReportsDashboard />;
   }
 
-  const handleFilter = () => {
-    refetch();
+  const handleFilter = async () => {
+    await refetch();
+    toast({
+      title: "Filters Applied",
+      description: `Report updated for ${startDate || "all time"} to ${endDate || "present"}`,
+    });
   };
 
   const handleExport = () => {
     if (!data) return;
     
     const csvContent = [
-      ["Tax & Expense Report"],
+      ["Expense Report"],
       ["Generated:", new Date().toLocaleDateString()],
       ["Context:", isBusinessContext ? "Business" : "Personal"],
       ["Date Range:", startDate || "All", "to", endDate || "All"],
@@ -544,20 +558,19 @@ export default function Reports() {
       ["Summary"],
       ["Total Receipts:", data.summary.totalReceipts],
       ["Total Spent:", data.summary.totalSpent],
-      ["Total Tax:", data.summary.totalTax],
       ["Total VAT:", data.summary.totalVat],
       [],
       ["By Category"],
-      ["Category", "Count", "Total", "Tax", "VAT"],
-      ...data.byCategory.map(c => [c.name, c.count, c.total, c.tax, c.vat]),
+      ["Category", "Count", "Total", "VAT"],
+      ...data.byCategory.map(c => [c.name, c.count, c.total, c.vat]),
       [],
       ["By Vendor"],
-      ["Vendor", "Count", "Total", "Tax", "VAT"],
-      ...data.byMerchant.map(m => [m.name, m.count, m.total, m.tax, m.vat]),
+      ["Vendor", "Count", "Total", "VAT"],
+      ...data.byMerchant.map(m => [m.name, m.count, m.total, m.vat]),
       [],
       ["By Month"],
-      ["Month", "Count", "Total", "Tax", "VAT"],
-      ...data.byMonth.map(m => [m.month, m.count, m.total, m.tax, m.vat]),
+      ["Month", "Count", "Total", "VAT"],
+      ...data.byMonth.map(m => [m.month, m.count, m.total, m.vat]),
     ].map(row => row.join(",")).join("\n");
 
     const blob = new Blob([csvContent], { type: "text/csv" });
@@ -574,8 +587,13 @@ export default function Reports() {
     if (startDate) params.append("startDate", startDate);
     if (endDate) params.append("endDate", endDate);
     if (includeTransactions) params.append("includeTransactions", "true");
+    params.append("category", selectedCategory);
+    params.append("vendor", selectedVendor);
+    params.append("groupBy", groupBy);
     
-    window.open(`/api/reports/pdf?${params.toString()}`, "_blank");
+    const url = `/api/reports/pdf?${params.toString()}`;
+    setPdfPreviewUrl(url);
+    setPdfPreviewOpen(true);
   };
 
   const handleDownloadPdf = async (includeTransactions: boolean = false) => {
@@ -585,6 +603,9 @@ export default function Reports() {
       if (startDate) params.append("startDate", startDate);
       if (endDate) params.append("endDate", endDate);
       if (includeTransactions) params.append("includeTransactions", "true");
+      params.append("category", selectedCategory);
+      params.append("vendor", selectedVendor);
+      params.append("groupBy", groupBy);
       
       const response = await fetch(`/api/reports/pdf?${params.toString()}`, {
         credentials: "include",
@@ -644,9 +665,27 @@ export default function Reports() {
   const monthlyChartData = data?.byMonth?.map(m => ({
     month: formatShortMonth(m.month),
     total: parseFloat(m.total),
-    tax: parseFloat(m.tax),
     vat: parseFloat(m.vat),
   })) || [];
+
+  // Get unique vendors from the data
+  const uniqueVendors = useMemo(() => {
+    if (!data?.byMerchant) return [];
+    return data.byMerchant.map(m => m.name).sort();
+  }, [data?.byMerchant]);
+
+  // Filter data based on selected category and vendor
+  const filteredCategoryData = useMemo(() => {
+    if (!data?.byCategory) return [];
+    if (selectedCategory === "all") return data.byCategory;
+    return data.byCategory.filter(cat => cat.name === selectedCategory);
+  }, [data?.byCategory, selectedCategory]);
+
+  const filteredMerchantData = useMemo(() => {
+    if (!data?.byMerchant) return [];
+    if (selectedVendor === "all") return data.byMerchant;
+    return data.byMerchant.filter(m => m.name === selectedVendor);
+  }, [data?.byMerchant, selectedVendor]);
 
   if (isLoading) {
     return (
@@ -671,14 +710,14 @@ export default function Reports() {
           <div>
             <div className="flex items-center gap-2">
               <h1 className="text-3xl font-semibold text-foreground" data-testid="text-page-title">
-                Tax & Reports
+                Expense Reports
               </h1>
               <Badge variant="default" data-testid="badge-context">
                 <Building2 className="h-3 w-3 mr-1" /> {user?.businessName || user?.businessProfile?.businessName || "Business"}
               </Badge>
             </div>
             <p className="text-muted-foreground mt-1">
-              View your spending summaries, tax deductions, and VAT reports
+              View your spending summaries and VAT reports
             </p>
           </div>
           <div className="flex flex-wrap gap-2">
@@ -705,16 +744,7 @@ export default function Reports() {
               ) : (
                 <FileText className="h-4 w-4 mr-2" />
               )}
-              Download PDF Report
-            </Button>
-            <Button 
-              onClick={() => handlePreviewPdf(true)} 
-              disabled={!data}
-              variant="outline"
-              data-testid="button-preview-pdf-detailed"
-            >
-              <Eye className="h-4 w-4 mr-2" />
-              Preview Full Report
+              Download PDF
             </Button>
           </div>
         </div>
@@ -723,12 +753,40 @@ export default function Reports() {
           <CardHeader>
             <CardTitle className="text-lg flex items-center gap-2">
               <Calendar className="h-5 w-5" />
-              Date Filter
+              Report Filters
             </CardTitle>
           </CardHeader>
-          <CardContent>
-            <div className="flex flex-col md:flex-row gap-4 items-end">
-              <div className="space-y-2 flex-1">
+          <CardContent className="space-y-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 items-end">
+              <div className="space-y-2">
+                <Label htmlFor="category">Expense Category</Label>
+                <Select value={selectedCategory} onValueChange={setSelectedCategory}>
+                  <SelectTrigger data-testid="select-category">
+                    <SelectValue placeholder="Select category" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Expenses</SelectItem>
+                    {BUSINESS_CATEGORIES.map(category => (
+                      <SelectItem key={category} value={category}>{category}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="vendor">Vendor</Label>
+                <Select value={selectedVendor} onValueChange={setSelectedVendor}>
+                  <SelectTrigger data-testid="select-vendor">
+                    <SelectValue placeholder="Select vendor" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">All Vendors</SelectItem>
+                    {uniqueVendors.map(vendor => (
+                      <SelectItem key={vendor} value={vendor}>{vendor}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
                 <Label htmlFor="startDate">From</Label>
                 <Input
                   id="startDate"
@@ -738,7 +796,7 @@ export default function Reports() {
                   data-testid="input-start-date"
                 />
               </div>
-              <div className="space-y-2 flex-1">
+              <div className="space-y-2">
                 <Label htmlFor="endDate">To</Label>
                 <Input
                   id="endDate"
@@ -748,272 +806,330 @@ export default function Reports() {
                   data-testid="input-end-date"
                 />
               </div>
-              <Button onClick={handleFilter} data-testid="button-filter">
-                Apply Filter
+            </div>
+            <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pt-2 border-t">
+              <div className="space-y-2">
+                <Label className="flex items-center gap-2">
+                  <LayoutGrid className="h-4 w-4" />
+                  Group By
+                </Label>
+                <ToggleGroup 
+                  type="single" 
+                  value={groupBy} 
+                  onValueChange={(value) => value && setGroupBy(value as GroupBy)}
+                  className="justify-start"
+                >
+                  <ToggleGroupItem value="none" data-testid="toggle-group-none">
+                    None
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="vendor" data-testid="toggle-group-vendor">
+                    <Store className="h-4 w-4 mr-1" />
+                    By Vendor
+                  </ToggleGroupItem>
+                  <ToggleGroupItem value="month" data-testid="toggle-group-month">
+                    <BarChart3 className="h-4 w-4 mr-1" />
+                    By Month
+                  </ToggleGroupItem>
+                </ToggleGroup>
+              </div>
+              <Button onClick={handleFilter} disabled={isFetching} data-testid="button-filter">
+                {isFetching ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Loading...
+                  </>
+                ) : (
+                  "Apply Filter"
+                )}
               </Button>
             </div>
           </CardContent>
         </Card>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">Total Receipts</CardTitle>
-              <Receipt className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold" data-testid="text-total-receipts">
-                {data?.summary.totalReceipts || 0}
-              </div>
-              <p className="text-xs text-muted-foreground">Receipts in this period</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">Total Spent</CardTitle>
-              <Coins className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold" data-testid="text-total-spent">
-                {formatCurrency(data?.summary.totalSpent || "0")}
-              </div>
-              <p className="text-xs text-muted-foreground">Total expenditure</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">Total Tax</CardTitle>
-              <Percent className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-orange-600" data-testid="text-total-tax">
-                {formatCurrency(data?.summary.totalTax || "0")}
-              </div>
-              <p className="text-xs text-muted-foreground">Income tax deductible</p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
-              <CardTitle className="text-sm font-medium">Total VAT</CardTitle>
-              <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl font-bold text-green-600" data-testid="text-total-vat">
-                {formatCurrency(data?.summary.totalVat || "0")}
-              </div>
-              <p className="text-xs text-muted-foreground">VAT claimable</p>
-            </CardContent>
-          </Card>
-        </div>
-
-        <Tabs defaultValue="category" className="w-full">
-          <TabsList className="grid w-full grid-cols-3">
-            <TabsTrigger value="category" data-testid="tab-category">
-              <PieChart className="h-4 w-4 mr-2" />
-              By Category
-            </TabsTrigger>
-            <TabsTrigger value="vendor" data-testid="tab-vendor">
-              <Store className="h-4 w-4 mr-2" />
-              By Vendor
-            </TabsTrigger>
-            <TabsTrigger value="month" data-testid="tab-month">
-              <BarChart3 className="h-4 w-4 mr-2" />
-              By Month
-            </TabsTrigger>
-          </TabsList>
-
-          <TabsContent value="category">
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Category Distribution</CardTitle>
-                  <CardDescription>Visual breakdown of spending by category</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {categoryChartData.length > 0 ? (
-                    <div className="h-64">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <RechartsPieChart>
-                          <Pie
-                            data={categoryChartData}
-                            cx="50%"
-                            cy="50%"
-                            labelLine={false}
-                            label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
-                            outerRadius={80}
-                            fill="#8884d8"
-                            dataKey="value"
-                          >
-                            {categoryChartData.map((_entry, index) => (
-                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                            ))}
-                          </Pie>
-                          <Tooltip formatter={(value: number) => `R ${value.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`} />
-                          <Legend />
-                        </RechartsPieChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <div className="h-64 flex items-center justify-center text-muted-foreground">
-                      No category data available
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-
-              <Card>
-                <CardHeader>
-                  <CardTitle>Category Details</CardTitle>
-                  <CardDescription>Detailed breakdown with tax information</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {data?.byCategory && data.byCategory.length > 0 ? (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Category</TableHead>
-                          <TableHead className="text-right">Receipts</TableHead>
-                          <TableHead className="text-right">Total</TableHead>
-                          <TableHead className="text-right">Tax</TableHead>
-                          <TableHead className="text-right">VAT</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {data.byCategory.map((cat) => (
-                          <TableRow key={cat.name} data-testid={`row-category-${cat.name}`}>
-                            <TableCell className="font-medium">
-                              <Badge variant="outline">{cat.name}</Badge>
-                            </TableCell>
-                            <TableCell className="text-right">{cat.count}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(cat.total)}</TableCell>
-                            <TableCell className="text-right text-orange-600">{formatCurrency(cat.tax)}</TableCell>
-                            <TableCell className="text-right text-green-600">{formatCurrency(cat.vat)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No category data available
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-
-          <TabsContent value="vendor">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             <Card>
-              <CardHeader>
-                <CardTitle>Spending by Vendor</CardTitle>
-                <CardDescription>Your expenses grouped by merchant/vendor</CardDescription>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
+                <CardTitle className="text-sm font-medium">Total Receipts</CardTitle>
+                <Receipt className="h-4 w-4 text-muted-foreground" />
               </CardHeader>
               <CardContent>
-                {data?.byMerchant && data.byMerchant.length > 0 ? (
+                <div className="text-2xl font-bold" data-testid="text-total-receipts">
+                  {data?.summary.totalReceipts || 0}
+                </div>
+                <p className="text-xs text-muted-foreground">Receipts in this period</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
+                <CardTitle className="text-sm font-medium">Total Spent</CardTitle>
+                <Coins className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold" data-testid="text-total-spent">
+                  {formatCurrency(data?.summary.totalSpent || "0")}
+                </div>
+                <p className="text-xs text-muted-foreground">Total expenditure</p>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2 gap-2">
+                <CardTitle className="text-sm font-medium">Total VAT</CardTitle>
+                <TrendingUp className="h-4 w-4 text-muted-foreground" />
+              </CardHeader>
+              <CardContent>
+                <div className="text-2xl font-bold text-green-600" data-testid="text-total-vat">
+                  {formatCurrency(data?.summary.totalVat || "0")}
+                </div>
+                <p className="text-xs text-muted-foreground">VAT claimable</p>
+              </CardContent>
+            </Card>
+        </div>
+
+        {/* Category View - shown when groupBy is "none" */}
+        {groupBy === "none" && (
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Category Distribution</CardTitle>
+                <CardDescription>
+                  {selectedCategory === "all" ? "Visual breakdown of spending by category" : `Showing ${selectedCategory} expenses`}
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                {categoryChartData.length > 0 ? (
+                  <div className="h-64">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <RechartsPieChart>
+                        <Pie
+                          data={categoryChartData}
+                          cx="50%"
+                          cy="50%"
+                          labelLine={false}
+                          label={({ name, percent }) => `${name} (${(percent * 100).toFixed(0)}%)`}
+                          outerRadius={80}
+                          fill="#8884d8"
+                          dataKey="value"
+                        >
+                          {categoryChartData.map((_entry, index) => (
+                            <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                          ))}
+                        </Pie>
+                        <Tooltip formatter={(value: number) => `R ${value.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`} />
+                        <Legend />
+                      </RechartsPieChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="h-64 flex items-center justify-center text-muted-foreground">
+                    No category data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Category Details</CardTitle>
+                <CardDescription>Detailed breakdown by category</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {filteredCategoryData.length > 0 ? (
                   <Table>
                     <TableHeader>
                       <TableRow>
-                        <TableHead>Vendor</TableHead>
+                        <TableHead>Category</TableHead>
                         <TableHead className="text-right">Receipts</TableHead>
                         <TableHead className="text-right">Total</TableHead>
-                        <TableHead className="text-right">Tax</TableHead>
                         <TableHead className="text-right">VAT</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
-                      {data.byMerchant.map((merchant) => (
-                        <TableRow key={merchant.name} data-testid={`row-vendor-${merchant.name}`}>
-                          <TableCell className="font-medium">{merchant.name}</TableCell>
-                          <TableCell className="text-right">{merchant.count}</TableCell>
-                          <TableCell className="text-right">{formatCurrency(merchant.total)}</TableCell>
-                          <TableCell className="text-right text-orange-600">{formatCurrency(merchant.tax)}</TableCell>
-                          <TableCell className="text-right text-green-600">{formatCurrency(merchant.vat)}</TableCell>
+                      {filteredCategoryData.map((cat) => (
+                        <TableRow key={cat.name} data-testid={`row-category-${cat.name}`}>
+                          <TableCell className="font-medium">
+                            <Badge variant="outline">{cat.name}</Badge>
+                          </TableCell>
+                          <TableCell className="text-right">{cat.count}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(cat.total)}</TableCell>
+                          <TableCell className="text-right text-green-600">{formatCurrency(cat.vat)}</TableCell>
                         </TableRow>
                       ))}
                     </TableBody>
                   </Table>
                 ) : (
                   <div className="text-center py-8 text-muted-foreground">
-                    No vendor data available
+                    No category data available
                   </div>
                 )}
               </CardContent>
             </Card>
-          </TabsContent>
+          </div>
+        )}
 
-          <TabsContent value="month">
-            <div className="space-y-6">
-              <Card>
-                <CardHeader>
-                  <CardTitle>Spending Trends</CardTitle>
-                  <CardDescription>Monthly spending patterns with tax breakdown</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {monthlyChartData.length > 0 ? (
-                    <div className="h-72">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <BarChart data={monthlyChartData}>
-                          <XAxis dataKey="month" />
-                          <YAxis tickFormatter={(value) => `R${(value / 1000).toFixed(0)}k`} />
-                          <Tooltip formatter={(value: number) => `R ${value.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`} />
-                          <Legend />
-                          <Bar dataKey="total" name="Total Spent" fill="#4f46e5" />
-                          <Bar dataKey="tax" name="Tax" fill="#f59e0b" />
-                          <Bar dataKey="vat" name="VAT" fill="#10b981" />
-                        </BarChart>
-                      </ResponsiveContainer>
-                    </div>
-                  ) : (
-                    <div className="h-72 flex items-center justify-center text-muted-foreground">
-                      No monthly data available
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
+        {/* Vendor View - shown when groupBy is "vendor" */}
+        {groupBy === "vendor" && (
+          <Card>
+            <CardHeader>
+              <CardTitle>Spending by Vendor</CardTitle>
+              <CardDescription>
+                {selectedVendor === "all" ? "Your expenses grouped by merchant/vendor" : `Showing expenses from ${selectedVendor}`}
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {filteredMerchantData.length > 0 ? (
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>Vendor</TableHead>
+                      <TableHead className="text-right">Receipts</TableHead>
+                      <TableHead className="text-right">Total</TableHead>
+                      <TableHead className="text-right">VAT</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {filteredMerchantData.map((merchant) => (
+                      <TableRow key={merchant.name} data-testid={`row-vendor-${merchant.name}`}>
+                        <TableCell className="font-medium">{merchant.name}</TableCell>
+                        <TableCell className="text-right">{merchant.count}</TableCell>
+                        <TableCell className="text-right">{formatCurrency(merchant.total)}</TableCell>
+                        <TableCell className="text-right text-green-600">{formatCurrency(merchant.vat)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  No vendor data available
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Monthly Details</CardTitle>
-                  <CardDescription>Detailed breakdown by month</CardDescription>
-                </CardHeader>
-                <CardContent>
-                  {data?.byMonth && data.byMonth.length > 0 ? (
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead>Month</TableHead>
-                          <TableHead className="text-right">Receipts</TableHead>
-                          <TableHead className="text-right">Total</TableHead>
-                          <TableHead className="text-right">Tax</TableHead>
-                          <TableHead className="text-right">VAT</TableHead>
+        {/* Monthly View - shown when groupBy is "month" */}
+        {groupBy === "month" && (
+          <div className="space-y-6">
+            <Card>
+              <CardHeader>
+                <CardTitle>Spending Trends</CardTitle>
+                <CardDescription>Monthly spending patterns with VAT breakdown</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {monthlyChartData.length > 0 ? (
+                  <div className="h-72">
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart data={monthlyChartData}>
+                        <XAxis dataKey="month" />
+                        <YAxis tickFormatter={(value) => `R${(value / 1000).toFixed(0)}k`} />
+                        <Tooltip formatter={(value: number) => `R ${value.toLocaleString("en-ZA", { minimumFractionDigits: 2 })}`} />
+                        <Legend />
+                        <Bar dataKey="total" name="Total Spent" fill="#4f46e5" />
+                        <Bar dataKey="vat" name="VAT" fill="#10b981" />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </div>
+                ) : (
+                  <div className="h-72 flex items-center justify-center text-muted-foreground">
+                    No monthly data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle>Monthly Details</CardTitle>
+                <CardDescription>Detailed breakdown by month</CardDescription>
+              </CardHeader>
+              <CardContent>
+                {data?.byMonth && data.byMonth.length > 0 ? (
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>Month</TableHead>
+                        <TableHead className="text-right">Receipts</TableHead>
+                        <TableHead className="text-right">Total</TableHead>
+                        <TableHead className="text-right">VAT</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {data.byMonth.map((month) => (
+                        <TableRow key={month.month} data-testid={`row-month-${month.month}`}>
+                          <TableCell className="font-medium">{formatMonth(month.month)}</TableCell>
+                          <TableCell className="text-right">{month.count}</TableCell>
+                          <TableCell className="text-right">{formatCurrency(month.total)}</TableCell>
+                          <TableCell className="text-right text-green-600">{formatCurrency(month.vat)}</TableCell>
                         </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {data.byMonth.map((month) => (
-                          <TableRow key={month.month} data-testid={`row-month-${month.month}`}>
-                            <TableCell className="font-medium">{formatMonth(month.month)}</TableCell>
-                            <TableCell className="text-right">{month.count}</TableCell>
-                            <TableCell className="text-right">{formatCurrency(month.total)}</TableCell>
-                            <TableCell className="text-right text-orange-600">{formatCurrency(month.tax)}</TableCell>
-                            <TableCell className="text-right text-green-600">{formatCurrency(month.vat)}</TableCell>
-                          </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  ) : (
-                    <div className="text-center py-8 text-muted-foreground">
-                      No monthly data available
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            </div>
-          </TabsContent>
-        </Tabs>
+                      ))}
+                    </TableBody>
+                  </Table>
+                ) : (
+                  <div className="text-center py-8 text-muted-foreground">
+                    No monthly data available
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        )}
       </div>
+
+      {/* PDF Preview Modal */}
+      <Dialog open={pdfPreviewOpen} onOpenChange={setPdfPreviewOpen}>
+        <DialogContent className="max-w-4xl h-[85vh] flex flex-col">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FileText className="h-5 w-5" />
+              PDF Report Preview
+            </DialogTitle>
+            <DialogDescription>
+              Review your expense report before downloading
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex-1 min-h-0 border rounded-lg overflow-hidden bg-muted">
+            {pdfPreviewUrl && (
+              <iframe
+                src={pdfPreviewUrl}
+                className="w-full h-full"
+                title="PDF Preview"
+                data-testid="iframe-pdf-preview"
+              />
+            )}
+          </div>
+          <DialogFooter className="flex flex-row justify-between gap-2 sm:justify-between">
+            <Button
+              variant="outline"
+              onClick={() => setPdfPreviewOpen(false)}
+              data-testid="button-close-preview"
+            >
+              <X className="h-4 w-4 mr-2" />
+              Close
+            </Button>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                onClick={() => window.open(pdfPreviewUrl, "_blank")}
+                data-testid="button-open-new-tab"
+              >
+                <Eye className="h-4 w-4 mr-2" />
+                Open in New Tab
+              </Button>
+              <Button
+                onClick={() => {
+                  handleDownloadPdf(false);
+                  setPdfPreviewOpen(false);
+                }}
+                data-testid="button-download-from-preview"
+              >
+                <Download className="h-4 w-4 mr-2" />
+                Download PDF
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

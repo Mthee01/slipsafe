@@ -538,7 +538,7 @@ Welcome to SlipSafe
 ## Support
 
 - **Email**: Support@slip-safe.net
-- **Enterprise**: enterprise@slipsafe.com
+- **Enterprise**: enterprise@slip-safe.net
 
 ---
 

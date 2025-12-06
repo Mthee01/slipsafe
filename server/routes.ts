@@ -15,10 +15,65 @@ import { processReceipt } from "./lib/ocr";
 import { generateReceiptPDF, generateExpenseReportPDF } from "./lib/pdf";
 import { readFile } from "fs/promises";
 import path from "path";
-import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail } from "./lib/email";
+import { sendEmail, generatePasswordResetEmail, generateUsernameRecoveryEmail, generateEmailVerificationEmail, generateWelcomeEmail, generateEnterpriseInquiryEmail } from "./lib/email";
+import { enterpriseInquiries } from "@shared/schema";
+import { db } from "./db";
 import { registerBillingRoutes } from "./billing";
 import { registerOrganizationRoutes } from "./organization-routes";
 import { canAddReceipt } from "./lib/planLimits";
+
+// Helper to convert plan selection + interval to Stripe plan ID
+// Returns null if invalid combination, preventing silent fallback to wrong plan
+function getPlanIdFromSelection(selectedPlan: string, billingInterval: string): string | null {
+  const planMap: Record<string, Record<string, string>> = {
+    "BUSINESS_SOLO": {
+      "monthly": "solo-monthly",
+      "annual": "solo-annual"
+    },
+    "BUSINESS_PRO": {
+      "monthly": "pro-monthly",
+      "annual": "pro-annual"
+    }
+    // BUSINESS_ENTERPRISE requires custom handling, not self-service checkout
+  };
+  return planMap[selectedPlan]?.[billingInterval] || null;
+}
+
+// Extend express-session to include activeContext
+declare module 'express-session' {
+  interface SessionData {
+    activeContext?: 'personal' | 'business';
+  }
+}
+
+// Helper to get current context from session (with user table as fallback for initial value)
+function getSessionContext(req: Request, user: { activeContext?: string | null }): 'personal' | 'business' {
+  // Check session first - this is per-session and avoids cross-session conflicts
+  if (req.session?.activeContext) {
+    return req.session.activeContext;
+  }
+  // Fallback to user's stored preference as initial default
+  return (user.activeContext as 'personal' | 'business') || 'personal';
+}
+
+// Middleware to block admin users from accessing user-specific routes
+// Admin accounts are support-only and should not have personal/business data
+async function blockAdminAccess(req: Request, res: express.Response, next: express.NextFunction) {
+  const userId = getCurrentUserId(req);
+  if (!userId) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  
+  const user = await storage.getUser(userId);
+  if (user && (user.role === 'admin' || user.role === 'support')) {
+    return res.status(403).json({ 
+      error: "Admin accounts cannot access user features",
+      message: "Admin accounts are support-only. Please use a regular user account for this action."
+    });
+  }
+  
+  next();
+}
 
 async function logUserActivity(
   userId: string, 
@@ -385,9 +440,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
         }
         await logUserActivity(user.id, "register", { accountType: input.accountType }, req);
         const { password, ...userWithoutPassword } = user;
+        
+        // For business users with valid plan selection, include redirect info for checkout
+        let checkoutRedirect = null;
+        if (input.accountType === "business" && input.selectedPlan && input.selectedPlan !== "BUSINESS_ENTERPRISE") {
+          const planId = getPlanIdFromSelection(input.selectedPlan, input.billingInterval || "monthly");
+          if (planId) {
+            checkoutRedirect = {
+              planId,
+              billingInterval: input.billingInterval || "monthly"
+            };
+          }
+          // If planId is null, user registered but will need to select a plan later
+        }
+        
         res.json({
           success: true,
-          user: userWithoutPassword
+          user: userWithoutPassword,
+          checkoutRedirect
         });
       });
     } catch (error: any) {
@@ -398,6 +468,61 @@ export async function registerRoutes(app: Express): Promise<Server> {
         });
       }
       res.status(500).json({ error: "Registration failed", message: error.message });
+    }
+  });
+
+  // Enterprise inquiry endpoint - for custom pricing requests
+  app.post("/api/enterprise-inquiry", async (req, res) => {
+    try {
+      const { name, email, company, phone, teamSize, message } = req.body;
+      
+      if (!name || !email || !company) {
+        return res.status(400).json({ error: "Name, email, and company are required" });
+      }
+      
+      // Persist the inquiry to the database
+      const [inquiry] = await db.insert(enterpriseInquiries).values({
+        name,
+        email,
+        company,
+        phone: phone || null,
+        teamSize: teamSize || null,
+        message: message || null,
+      }).returning();
+      
+      console.log("[Enterprise Inquiry] Saved inquiry:", inquiry.id);
+      
+      // Send notification email to the enterprise team
+      const adminEmail = process.env.ENTERPRISE_EMAIL || "enterprise@slip-safe.net";
+      const emailHtml = generateEnterpriseInquiryEmail({
+        name,
+        email,
+        company,
+        phone,
+        teamSize,
+        message,
+      });
+      
+      // Send the email notification (don't block on failure)
+      sendEmail(adminEmail, `New Enterprise Inquiry from ${company}`, emailHtml)
+        .then((success) => {
+          if (success) {
+            console.log("[Enterprise Inquiry] Notification email sent to", adminEmail);
+          } else {
+            console.error("[Enterprise Inquiry] Failed to send notification email");
+          }
+        })
+        .catch((err) => {
+          console.error("[Enterprise Inquiry] Email error:", err);
+        });
+      
+      res.json({ 
+        success: true, 
+        message: "Your inquiry has been received. Our team will contact you within 1-2 business days." 
+      });
+    } catch (error: any) {
+      console.error("Enterprise inquiry error:", error);
+      res.status(500).json({ error: "Failed to submit inquiry" });
     }
   });
 
@@ -725,9 +850,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
         businessProfile = await storage.getBusinessProfile(fullUser.id);
       }
       
+      // Return session-based activeContext instead of stored value
+      const sessionContext = getSessionContext(req, fullUser);
+      
       res.json({ 
         user: {
           ...userWithoutPassword,
+          activeContext: sessionContext, // Use session context, not stored value
           businessName: businessProfile?.businessName || null,
           businessProfile: businessProfile || null,
         }
@@ -737,7 +866,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.put("/api/users/profile", isAuthenticated, async (req, res) => {
+  app.put("/api/users/profile", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -760,7 +889,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users/context", isAuthenticated, async (req, res) => {
+  app.post("/api/users/context", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -772,24 +901,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(400).json({ error: "Invalid context. Must be 'personal' or 'business'" });
       }
 
-      const updatedUser = await storage.updateUserContext(userId, context);
-      if (!updatedUser) {
+      // Store context in session instead of user table to prevent cross-session conflicts
+      req.session.activeContext = context as 'personal' | 'business';
+      
+      // Get current user data
+      const user = await storage.getUser(userId);
+      if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
 
       await logUserActivity(userId, "context_switch", { newContext: context }, req);
-      const { password, ...userWithoutPassword } = updatedUser;
+      const { password, ...userWithoutPassword } = user;
       
       // Include business profile data for consistent response
       let businessProfile = null;
-      if (updatedUser.accountType === "business") {
-        businessProfile = await storage.getBusinessProfile(updatedUser.id);
+      if (user.accountType === "business") {
+        businessProfile = await storage.getBusinessProfile(user.id);
       }
       
+      // Return user data with the session-based activeContext
       res.json({ 
         success: true, 
         user: {
           ...userWithoutPassword,
+          activeContext: context, // Return the session context, not the stored one
           businessName: businessProfile?.businessName || null,
           businessProfile: businessProfile || null,
         }
@@ -842,17 +977,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(500).json({ error: "Failed to update account type" });
       }
 
-      // Automatically switch to business context after upgrade
-      const userWithBusinessContext = await storage.updateUserContext(userId, "business");
+      // Automatically switch to business context in session after upgrade
+      req.session.activeContext = "business";
 
       await logUserActivity(userId, "business_profile_update", { action: "upgrade_to_business" }, req);
       
-      const finalUser = userWithBusinessContext || updatedUser;
-      const { password, ...userWithoutPassword } = finalUser;
+      const { password, ...userWithoutPassword } = updatedUser;
       res.json({ 
         success: true, 
         user: {
           ...userWithoutPassword,
+          activeContext: "business", // Return the session context
           businessName: businessProfile.businessName,
           businessProfile,
         }
@@ -916,7 +1051,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/users/profile/picture", isAuthenticated, upload.single("picture"), async (req, res) => {
+  app.post("/api/users/profile/picture", isAuthenticated, blockAdminAccess, upload.single("picture"), async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -976,7 +1111,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/receipts/preview", isAuthenticated, upload.single("receipt"), async (req, res) => {
+  app.post("/api/receipts/preview", isAuthenticated, blockAdminAccess, upload.single("receipt"), async (req, res) => {
     try {
       if (!req.file) {
         return res.status(400).json({ error: "No file uploaded" });
@@ -1123,19 +1258,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/receipts/confirm", isAuthenticated, async (req, res) => {
+  app.post("/api/receipts/confirm", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
         return res.status(401).json({ error: "Unauthorized" });
       }
 
-      // Get user's active context
+      // Get user's active context from session
       const user = await storage.getUser(userId);
       if (!user) {
         return res.status(404).json({ error: "User not found" });
       }
-      const context = user.activeContext || "personal";
+      const context = getSessionContext(req, user);
 
       // Check plan limits for business context receipts
       let organizationId: string | null = null;
@@ -1268,7 +1403,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.post("/api/receipts/text", isAuthenticated, async (req, res) => {
+  app.post("/api/receipts/text", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1458,7 +1593,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Update receipt policies (return/refund/exchange/warranty)
-  app.patch("/api/receipts/:id/policies", isAuthenticated, async (req, res) => {
+  app.patch("/api/receipts/:id/policies", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1543,7 +1678,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get receipt policies
-  app.get("/api/receipts/:id/policies", isAuthenticated, async (req, res) => {
+  app.get("/api/receipts/:id/policies", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1702,7 +1837,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/purchases", isAuthenticated, async (req, res) => {
+  app.get("/api/purchases", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1715,7 +1850,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       const { category, search } = req.query;
-      const context = user.activeContext;
+      const context = getSessionContext(req, user);
       
       let purchases;
       if (search && typeof search === "string") {
@@ -1733,7 +1868,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get single purchase by ID
-  app.get("/api/purchases/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/purchases/:id", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1753,7 +1888,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/purchases/:id", isAuthenticated, async (req, res) => {
+  app.patch("/api/purchases/:id", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1780,7 +1915,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Personal user reports - returns and warranty focused
-  app.get("/api/reports/personal", isAuthenticated, async (req, res) => {
+  app.get("/api/reports/personal", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1906,7 +2041,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/reports/summary", isAuthenticated, async (req, res) => {
+  app.get("/api/reports/summary", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -1923,7 +2058,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(403).json({ error: "Tax & Reports is only available for business accounts" });
       }
 
-      const context = user.activeContext;
+      const context = getSessionContext(req, user);
       const { startDate, endDate } = req.query;
       
       // For business context with an organization, get all organization receipts
@@ -2028,7 +2163,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Generate PDF expense report for business users
-  app.get("/api/reports/pdf", isAuthenticated, async (req, res) => {
+  app.get("/api/reports/pdf", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -2048,8 +2183,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Get business profile for tax info
       const businessProfile = await storage.getBusinessProfile(userId);
       
-      const context = user.activeContext;
-      const { startDate, endDate, includeTransactions } = req.query;
+      const context = getSessionContext(req, user);
+      const { startDate, endDate, includeTransactions, category, vendor, groupBy } = req.query;
+      const selectedCategory = typeof category === "string" ? category : "all";
+      const selectedVendor = typeof vendor === "string" ? vendor : "all";
+      const validGroupBy = ["none", "vendor", "month"] as const;
+      const selectedGroupBy = validGroupBy.includes(groupBy as any) ? (groupBy as "none" | "vendor" | "month") : "none";
       
       // For business context with an organization, get all organization receipts
       let purchases;
@@ -2066,6 +2205,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
       if (endDate && typeof endDate === "string") {
         filteredPurchases = filteredPurchases.filter(p => p.date <= endDate);
+      }
+      
+      // Filter by category if specified
+      if (selectedCategory !== "all") {
+        filteredPurchases = filteredPurchases.filter(p => p.category === selectedCategory);
+      }
+      
+      // Filter by vendor if specified
+      if (selectedVendor !== "all") {
+        filteredPurchases = filteredPurchases.filter(p => p.merchant === selectedVendor);
       }
 
       // Calculate totals
@@ -2125,6 +2274,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
           startDate: typeof startDate === "string" ? startDate : undefined,
           endDate: typeof endDate === "string" ? endDate : undefined,
         },
+        filters: {
+          category: selectedCategory,
+          vendor: selectedVendor,
+          groupBy: selectedGroupBy,
+        },
         summary: {
           totalReceipts: filteredPurchases.length,
           totalSpent,
@@ -2153,7 +2307,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         })).sort((a, b) => b.date.localeCompare(a.date)) : undefined,
       };
 
-      // Generate PDF
+      // Generate PDF with selected filters
       const doc = generateExpenseReportPDF(reportData);
       
       // Set response headers for PDF download
@@ -2172,7 +2326,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/settings", isAuthenticated, async (req, res) => {
+  app.get("/api/settings", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -2186,7 +2340,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.patch("/api/settings", isAuthenticated, async (req, res) => {
+  app.patch("/api/settings", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -2293,7 +2447,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Serve receipt image
-  app.get("/api/receipts/image/:id", isAuthenticated, async (req, res) => {
+  app.get("/api/receipts/image/:id", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -2327,7 +2481,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  app.get("/api/purchases/:id/pdf", isAuthenticated, async (req, res) => {
+  app.get("/api/purchases/:id/pdf", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req);
       if (!userId) {
@@ -2547,6 +2701,439 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Admin merchants fetch error:", error);
       res.status(500).json({ error: "Failed to fetch merchants", message: error.message });
+    }
+  });
+
+  // Admin endpoint to get single user details
+  app.get("/api/admin/users/:userId", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const { password, ...userWithoutPassword } = user;
+      
+      // Get business profile if business account
+      let businessProfile = null;
+      if (user.accountType === "business") {
+        businessProfile = await storage.getBusinessProfile(userId);
+      }
+      
+      // Get user's organization (if they own one)
+      const organizations = await storage.getOrganizationsByOwner(userId);
+      
+      // Get recent activity
+      const activity = await storage.getUserActivity(userId, 1, 10);
+      
+      // Get receipts and claims counts
+      const receipts = await storage.getPurchasesByUser(userId);
+      const claims = await storage.getClaimsByUser(userId);
+      
+      res.json({ 
+        ...userWithoutPassword,
+        businessProfile,
+        organizations,
+        recentActivity: activity.activities,
+        receiptsCount: receipts.length,
+        claimsCount: claims.length
+      });
+    } catch (error: any) {
+      console.error("Admin user details fetch error:", error);
+      res.status(500).json({ error: "Failed to fetch user details", message: error.message });
+    }
+  });
+
+  // Admin endpoint to trigger password reset email for a user
+  app.post("/api/admin/users/:userId/password-reset", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      if (!user.email) {
+        return res.status(400).json({ error: "User has no email address on file" });
+      }
+      
+      // Generate password reset token (same as forgot password flow)
+      const resetToken = generateResetToken();
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
+      
+      await storage.createPasswordResetToken(userId, resetToken, expiresAt);
+      
+      // Send password reset email
+      const resetUrl = `${req.protocol}://${req.get('host')}/reset-password?token=${resetToken}`;
+      const emailContent = generatePasswordResetEmail(resetUrl);
+      
+      await sendEmail(
+        user.email,
+        "Password Reset Request - SlipSafe",
+        emailContent
+      );
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_password_reset_triggered", { 
+        targetUserId: userId,
+        targetEmail: user.email
+      }, req);
+      
+      res.json({ 
+        success: true, 
+        message: `Password reset email sent to ${user.email}` 
+      });
+    } catch (error: any) {
+      console.error("Admin password reset error:", error);
+      res.status(500).json({ error: "Failed to send password reset email", message: error.message });
+    }
+  });
+
+  // Admin endpoint to unlock a user account
+  app.post("/api/admin/users/:userId/unlock", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      // Clear any rate limit records for this user
+      const rateLimitKey = `login:${user.username}`;
+      rateLimitStore.delete(rateLimitKey);
+      
+      // Clear email-based rate limit as well
+      if (user.email) {
+        const emailRateLimitKey = `login:${user.email}`;
+        rateLimitStore.delete(emailRateLimitKey);
+      }
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_account_unlocked", { 
+        targetUserId: userId,
+        targetUsername: user.username
+      }, req);
+      
+      res.json({ 
+        success: true, 
+        message: `Account ${user.username} has been unlocked` 
+      });
+    } catch (error: any) {
+      console.error("Admin account unlock error:", error);
+      res.status(500).json({ error: "Failed to unlock account", message: error.message });
+    }
+  });
+
+  // Admin endpoint to manually verify a user's email
+  app.post("/api/admin/users/:userId/verify-email", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const user = await storage.getUser(userId);
+      
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      if (user.emailVerified) {
+        return res.status(400).json({ error: "Email is already verified" });
+      }
+      
+      await storage.verifyUserEmail(userId);
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_email_verified", { 
+        targetUserId: userId,
+        targetEmail: user.email
+      }, req);
+      
+      res.json({ 
+        success: true, 
+        message: `Email verified for ${user.email}` 
+      });
+    } catch (error: any) {
+      console.error("Admin email verification error:", error);
+      res.status(500).json({ error: "Failed to verify email", message: error.message });
+    }
+  });
+
+  // Admin endpoint to change user account type (individual <-> business)
+  app.patch("/api/admin/users/:userId/account-type", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { userId } = req.params;
+      const { accountType, businessName, taxId, vatNumber } = req.body;
+      
+      if (!accountType || !["individual", "business"].includes(accountType)) {
+        return res.status(400).json({ error: "Invalid account type. Must be 'individual' or 'business'" });
+      }
+      
+      const user = await storage.getUser(userId);
+      if (!user) {
+        return res.status(404).json({ error: "User not found" });
+      }
+      
+      const previousType = user.accountType;
+      
+      // Update user account type
+      await storage.updateUser(userId, { 
+        accountType
+      });
+      
+      // If upgrading to business, create/update business profile
+      if (accountType === "business") {
+        const existingProfile = await storage.getBusinessProfile(userId);
+        if (existingProfile) {
+          await storage.updateBusinessProfile(userId, {
+            businessName: businessName || existingProfile.businessName,
+            taxId: taxId !== undefined ? taxId : existingProfile.taxId,
+            vatNumber: vatNumber !== undefined ? vatNumber : existingProfile.vatNumber
+          });
+        } else {
+          await storage.createBusinessProfile({
+            userId,
+            businessName: businessName || "My Business",
+            taxId: taxId || null,
+            vatNumber: vatNumber || null
+          });
+        }
+      }
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_account_type_changed", { 
+        targetUserId: userId,
+        previousType,
+        newType: accountType
+      }, req);
+      
+      const updatedUser = await storage.getUser(userId);
+      const { password, ...userWithoutPassword } = updatedUser!;
+      
+      res.json({ 
+        success: true, 
+        message: `Account type changed from ${previousType} to ${accountType}`,
+        user: userWithoutPassword
+      });
+    } catch (error: any) {
+      console.error("Admin account type change error:", error);
+      res.status(500).json({ error: "Failed to change account type", message: error.message });
+    }
+  });
+
+  // ============================================
+  // ADMIN ORGANIZATION MANAGEMENT ROUTES
+  // ============================================
+
+  // List all organizations (with search/pagination)
+  app.get("/api/admin/organizations", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const page = parseInt(req.query.page as string) || 1;
+      const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
+      const search = req.query.search as string | undefined;
+      
+      const result = await storage.getAllOrganizations(page, limit, search);
+      
+      // Enrich with owner info and member counts
+      const enrichedOrgs = await Promise.all(
+        result.organizations.map(async (org) => {
+          const owner = await storage.getUser(org.ownerUserId);
+          const members = await storage.getOrganizationMembers(org.id);
+          return {
+            ...org,
+            ownerEmail: owner?.email,
+            ownerName: owner?.fullName,
+            memberCount: members.length
+          };
+        })
+      );
+      
+      res.json({
+        ...result,
+        organizations: enrichedOrgs
+      });
+    } catch (error: any) {
+      console.error("Admin organizations list error:", error);
+      res.status(500).json({ error: "Failed to fetch organizations" });
+    }
+  });
+
+  // Get organization details (including members)
+  app.get("/api/admin/organizations/:organizationId", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { organizationId } = req.params;
+      
+      const org = await storage.getOrganizationById(organizationId);
+      if (!org) {
+        return res.status(404).json({ error: "Organization not found" });
+      }
+      
+      const members = await storage.getOrganizationMembers(org.id);
+      const owner = await storage.getUser(org.ownerUserId);
+      
+      // Enrich members with user details
+      const enrichedMembers = await Promise.all(
+        members.map(async (member) => {
+          const user = await storage.getUser(member.userId);
+          return {
+            ...member,
+            email: user?.email,
+            fullName: user?.fullName,
+            username: user?.username
+          };
+        })
+      );
+      
+      res.json({
+        organization: {
+          ...org,
+          ownerEmail: owner?.email,
+          ownerName: owner?.fullName
+        },
+        members: enrichedMembers
+      });
+    } catch (error: any) {
+      console.error("Admin organization details error:", error);
+      res.status(500).json({ error: "Failed to fetch organization details" });
+    }
+  });
+
+  // Transfer organization ownership
+  app.post("/api/admin/organizations/:organizationId/transfer-ownership", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { organizationId } = req.params;
+      const { newOwnerUserId } = req.body;
+      
+      if (!newOwnerUserId) {
+        return res.status(400).json({ error: "New owner user ID is required" });
+      }
+      
+      const org = await storage.getOrganizationById(organizationId);
+      if (!org) {
+        return res.status(404).json({ error: "Organization not found" });
+      }
+      
+      const newOwner = await storage.getUser(newOwnerUserId);
+      if (!newOwner) {
+        return res.status(404).json({ error: "New owner user not found" });
+      }
+      
+      const previousOwnerId = org.ownerUserId;
+      
+      // Check if new owner is a member
+      const newOwnerMembership = await storage.getOrganizationMember(organizationId, newOwnerUserId);
+      if (!newOwnerMembership || !newOwnerMembership.isActive) {
+        return res.status(400).json({ error: "New owner must be an active member of the organization" });
+      }
+      
+      // Update the organization owner
+      await storage.updateOrganization(organizationId, { ownerUserId: newOwnerUserId });
+      
+      // Update member roles: new owner becomes 'owner', old owner becomes 'admin'
+      await storage.updateOrganizationMemberRole(organizationId, newOwnerUserId, "owner");
+      await storage.updateOrganizationMemberRole(organizationId, previousOwnerId, "admin");
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_org_ownership_transferred", { 
+        organizationId,
+        organizationName: org.name,
+        previousOwnerId,
+        newOwnerId: newOwnerUserId
+      }, req);
+      
+      res.json({ 
+        success: true, 
+        message: `Ownership transferred to ${newOwner.fullName || newOwner.username}`
+      });
+    } catch (error: any) {
+      console.error("Admin ownership transfer error:", error);
+      res.status(500).json({ error: "Failed to transfer ownership", message: error.message });
+    }
+  });
+
+  // Remove member from organization
+  app.delete("/api/admin/organizations/:organizationId/members/:userId", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { organizationId, userId } = req.params;
+      
+      const org = await storage.getOrganizationById(organizationId);
+      if (!org) {
+        return res.status(404).json({ error: "Organization not found" });
+      }
+      
+      if (userId === org.ownerUserId) {
+        return res.status(400).json({ error: "Cannot remove the organization owner. Transfer ownership first." });
+      }
+      
+      const member = await storage.getOrganizationMember(organizationId, userId);
+      if (!member) {
+        return res.status(404).json({ error: "Member not found in organization" });
+      }
+      
+      const user = await storage.getUser(userId);
+      
+      await storage.removeOrganizationMember(organizationId, userId);
+      
+      // Clear user's active organization if it was this one
+      if (user?.activeOrganizationId === organizationId) {
+        await storage.updateUserActiveOrganization(userId, null);
+      }
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_org_member_removed", { 
+        organizationId,
+        organizationName: org.name,
+        removedUserId: userId,
+        removedUserEmail: user?.email
+      }, req);
+      
+      res.json({ success: true, message: "Member removed from organization" });
+    } catch (error: any) {
+      console.error("Admin member removal error:", error);
+      res.status(500).json({ error: "Failed to remove member", message: error.message });
+    }
+  });
+
+  // Update member role
+  app.patch("/api/admin/organizations/:organizationId/members/:userId/role", isAuthenticated, isAdmin, async (req, res) => {
+    try {
+      const { organizationId, userId } = req.params;
+      const { role } = req.body;
+      
+      if (!role || !["admin", "member"].includes(role)) {
+        return res.status(400).json({ error: "Invalid role. Must be 'admin' or 'member'" });
+      }
+      
+      const org = await storage.getOrganizationById(organizationId);
+      if (!org) {
+        return res.status(404).json({ error: "Organization not found" });
+      }
+      
+      if (userId === org.ownerUserId) {
+        return res.status(400).json({ error: "Cannot change the owner's role" });
+      }
+      
+      const member = await storage.getOrganizationMember(organizationId, userId);
+      if (!member) {
+        return res.status(404).json({ error: "Member not found in organization" });
+      }
+      
+      const previousRole = member.role;
+      await storage.updateOrganizationMemberRole(organizationId, userId, role);
+      
+      const user = await storage.getUser(userId);
+      
+      await logUserActivity(getCurrentUserId(req)!, "admin_org_member_role_changed", { 
+        organizationId,
+        organizationName: org.name,
+        targetUserId: userId,
+        targetUserEmail: user?.email,
+        previousRole,
+        newRole: role
+      }, req);
+      
+      res.json({ 
+        success: true, 
+        message: `Member role changed from ${previousRole} to ${role}`
+      });
+    } catch (error: any) {
+      console.error("Admin role change error:", error);
+      res.status(500).json({ error: "Failed to change member role", message: error.message });
     }
   });
 
@@ -3050,7 +3637,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // ============================================
 
   // Create a claim for a purchase
-  app.post("/api/claims", isAuthenticated, async (req, res) => {
+  app.post("/api/claims", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req)!;
       const validatedData = createClaimSchema.parse(req.body);
@@ -3164,7 +3751,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get user's claims
-  app.get("/api/claims", isAuthenticated, async (req, res) => {
+  app.get("/api/claims", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req)!;
       const user = await storage.getUser(userId);
@@ -3172,8 +3759,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.status(404).json({ error: "User not found" });
       }
       
-      // Filter claims by user's active context
-      const claims = await storage.getClaimsByUserAndContext(userId, user.activeContext);
+      // Filter claims by user's active context (session-based)
+      const context = getSessionContext(req, user);
+      const claims = await storage.getClaimsByUserAndContext(userId, context);
       
       res.json({
         claims: claims.map(c => ({
@@ -3196,7 +3784,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // Get specific claim with QR code
-  app.get("/api/claims/:claimCode", isAuthenticated, async (req, res) => {
+  app.get("/api/claims/:claimCode", isAuthenticated, blockAdminAccess, async (req, res) => {
     try {
       const userId = getCurrentUserId(req)!;
       const { claimCode } = req.params;

@@ -623,7 +623,7 @@ export default function Profile() {
                 <span className="font-medium text-lg" data-testid="text-current-plan">
                   {subscription?.planType === "free" && "SlipSafe Free"}
                   {subscription?.planType === "business_solo" && "Business Solo"}
-                  {subscription?.planType === "business_pro" && "Business Team"}
+                  {subscription?.planType === "business_pro" && "Business Pro"}
                   {subscription?.planType === "enterprise" && "Enterprise"}
                   {!subscription?.planType && "SlipSafe Free"}
                 </span>
