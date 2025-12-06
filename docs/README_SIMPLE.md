@@ -176,14 +176,22 @@ Your personal and business receipts stay completely separate.
 
 | Plan | Price | Best For |
 |------|-------|----------|
+| **Free** | R0 | Personal use - unlimited personal receipts, basic features |
 | **Solo** | R99/month | Self-employed and freelancers - 1 user, 1,000 business receipts/month |
 | **Pro** | R269/month | Small teams - up to 10 users, 5,000 receipts/month |
 | **Enterprise** | Custom pricing | Large organisations - unlimited users and receipts |
 
-All plans include:
+**Free Plan includes:**
+- Unlimited personal receipt storage
+- Return deadline tracking
+- Warranty reminders
+- Basic dashboard
+
+**Paid Business Plans (Solo, Pro, Enterprise) add:**
 - Business expense tracking
 - VAT and tax reports
 - CSV and PDF exports
+- Team collaboration (Pro and Enterprise)
 - Priority email support
 
 ---
@@ -295,8 +303,8 @@ Don't have a smartphone? No problem! SlipSafe also works via USSD:
 
 ### General Questions
 
-**How much does SlipSafe cost?**
-SlipSafe offers three subscription plans starting at R99/month for the Solo plan. The Pro plan for teams is R269/month, and Enterprise pricing is customised for larger organisations.
+**Is SlipSafe free to use?**
+Yes! Personal use is completely free with unlimited receipt storage, return deadline tracking, and warranty reminders. Business features (VAT reports, expense tracking, team collaboration) require a paid subscription starting at R99/month.
 
 **What if I lose my phone?**
 Your receipts are stored in the cloud, not just on your phone. Log in from any device to access them.
