@@ -60,7 +60,7 @@ You have three ways to add a receipt:
 
 ### Step 2: SlipSafe Reads It For You
 
-Our smart scanning technology (powered by Google's advanced AI) automatically extracts:
+Our smart scanning technology (powered exclusively by **Gemini Vision AI**) automatically extracts:
 - **Store name** - Where you shopped
 - **Date** - When you made the purchase
 - **Total amount** - How much you spent
@@ -86,7 +86,7 @@ SlipSafe will notify you:
 
 ### Smart Receipt Scanning
 
-Just point your camera at a receipt and SlipSafe does the hard work. It uses Google's latest AI technology to read even faded or crumpled receipts. The system works with:
+Just point your camera at a receipt and SlipSafe does the hard work. It uses **Google's Gemini Vision AI** - the exclusive scanning technology that powers SlipSafe - to read even faded or crumpled receipts with remarkable accuracy. The system works with:
 - Till slips from shops
 - Restaurant bills
 - Online order confirmations
