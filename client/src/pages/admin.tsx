@@ -857,6 +857,12 @@ export default function AdminDashboard() {
                     View Activity Log
                   </Button>
                 </Link>
+                <Link href="/admin/crm">
+                  <Button variant="outline" className="justify-start w-full" data-testid="button-goto-crm">
+                    <Users className="h-4 w-4 mr-2" />
+                    Customer Management (CRM)
+                  </Button>
+                </Link>
               </CardContent>
             </Card>
 

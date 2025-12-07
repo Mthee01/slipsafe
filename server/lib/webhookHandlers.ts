@@ -109,6 +109,8 @@ export class WebhookHandlers {
     const userId = subscription.metadata?.userId;
     const planType = subscription.metadata?.planType as PlanType;
     const billingInterval = subscription.metadata?.billingInterval;
+    const subAny = subscription as any;
+    const periodEnd = subAny.current_period_end ? new Date(subAny.current_period_end * 1000) : null;
 
     if (!userId) {
       console.log('[Webhook] No userId in subscription metadata, looking up by customer...');
@@ -125,7 +127,7 @@ export class WebhookHandlers {
         planType: planType || user.planType || 'free',
         billingInterval: billingInterval || 'monthly',
         subscriptionStatus: subscription.status,
-        subscriptionCurrentPeriodEnd: new Date(subscription.current_period_end * 1000),
+        subscriptionCurrentPeriodEnd: periodEnd,
         businessReceiptLimitPerMonth: limits.receiptLimit,
         businessUserLimit: limits.userLimit,
       });
@@ -141,7 +143,7 @@ export class WebhookHandlers {
       planType: planType || 'free',
       billingInterval: billingInterval || 'monthly',
       subscriptionStatus: subscription.status,
-      subscriptionCurrentPeriodEnd: new Date(subscription.current_period_end * 1000),
+      subscriptionCurrentPeriodEnd: periodEnd,
       businessReceiptLimitPerMonth: limits.receiptLimit,
       businessUserLimit: limits.userLimit,
     });
@@ -191,7 +193,8 @@ export class WebhookHandlers {
   private static async handlePaymentFailed(invoice: Stripe.Invoice): Promise<void> {
     console.log(`[Webhook] Payment failed for invoice: ${invoice.id}`);
     
-    const subscriptionId = invoice.subscription as string;
+    const invoiceAny = invoice as any;
+    const subscriptionId = invoiceAny.subscription as string;
     if (!subscriptionId) return;
 
     const user = await storage.getUserByStripeSubscriptionId(subscriptionId);

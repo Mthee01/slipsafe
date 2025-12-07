@@ -1,0 +1,295 @@
+You are an expert full-stack TypeScript developer working inside my existing SlipSafe monorepo on Replit.
+
+Context about this codebase:
+- It is a monorepo with:
+  - client/ (React 18 + TypeScript + Vite + Wouter + TanStack Query + Shadcn/Tailwind UI)
+  - server/ (Express.js + TypeScript)
+  - shared/schema.ts (Drizzle ORM + Zod schemas for PostgreSQL)
+- Database is PostgreSQL (Neon). There are existing tables like users, purchases, claims, organizations, organization_members, business_profiles, merchant_rules, etc. Please reuse existing patterns and conventions rather than inventing totally new ones.
+
+Goal:
+Design and IMPLEMENT a production-ready module for:
+
+1. **Subscription and billing management** using Stripe, aligned to these plans and prices:
+
+   - **SlipSafe Free**
+     - R0 /forever
+     - Unlimited personal receipts
+     - OCR-based receipt scanning
+     - Return & warranty tracking
+     - Claim generation with QR codes
+     - PWA with offline support
+
+   - **Business Solo**
+     - R99/month **monthly**
+     - or R80/month **billed annually** (R960/year – about 19% discount)
+     - 1 user
+     - Everything in Free
+     - Business profile & dashboard
+     - Up to 1,000 business receipts/month
+     - Tax & VAT reporting
+     - CSV & PDF exports
+     - Email support
+
+   - **Business Team**
+     - R269/month **monthly**
+     - or R229/month **billed annually** (R2,748/year – about 15% discount)
+     - For teams of 2–10 people (up to 10 users)
+     - Everything in Solo
+     - Up to 5,000 business receipts/month
+     - Team workspace with shared access
+     - Owner/manager roles
+     - Team reports & analytics
+     - Priority email support
+
+   - **Enterprise**
+     - Custom (monthly and/or annual pricing agreed per customer)
+     - Everything in Team
+     - Unlimited receipts
+     - Unlimited users
+     - Custom integrations
+     - Dedicated account manager
+     - SLA with guaranteed uptime
+     - On-premise / custom deployment options
+
+   The implementation must support **both monthly and annual billing options** per paid plan (Solo, Team, Enterprise), with annual options mapped to separate Stripe Prices.
+
+2. **Plan limits and entitlements**:
+   - Free plan: personal receipts only, no business mode, no VAT reports, no team features.
+   - Business Solo: 1 business account owner, business mode, VAT & tax reports, CSV/PDF export, up to 1,000 business receipts/month.
+   - Business Team: up to 10 team members in an organisation, up to 5,000 business receipts/month, team workspace & reporting.
+   - Enterprise: very high / effectively unlimited limits (treat as unlimited in v1), plus flags for custom enterprise features.
+
+3. **Light CRM (customer relationships)** for internal use:
+   - A “CRM Account” view for each paying customer or organisation.
+   - Timeline of important events (subscription created, payment failed, cancelled, upgrade/downgrade).
+   - Simple notes and follow-up tasks for the internal team.
+
+---
+
+### Part 1 – Data model (Drizzle schema)
+
+Extend `shared/schema.ts` to add **only the necessary tables** for billing + CRM, following existing naming, types, and indexing style.
+
+Create Drizzle models (with Zod where appropriate) for at least:
+
+1. `plans`
+   - id (uuid, pk)
+   - code (string, unique tier identifier: "free" | "business_solo" | "business_team" | "enterprise")
+   - name (string) – human-readable name, e.g. "SlipSafe Free", "Business Solo"
+   - description (text)
+   - defaultBillingPeriod (enum: "monthly" | "annual" | "none") – e.g. "monthly" for paid plans, "none" for Free
+   - monthlyPriceCents (int, nullable) – e.g. 9900 for R99
+   - annualPriceCents (int, nullable) – e.g. 96000 for Business Solo, 274800 for Business Team, null for Free/custom
+   - annualDiscountPercent (int, nullable) – e.g. 19 for Solo, 15 for Team
+   - currency (string, e.g. "ZAR")
+   - stripeProductId (string, nullable)
+   - stripeMonthlyPriceId (string, nullable)
+   - stripeAnnualPriceId (string, nullable)
+   - isActive (boolean)
+   - isBusinessPlan (boolean) – false for Free, true for Solo/Team/Enterprise
+
+2. `plan_features`
+   - id (uuid, pk)
+   - planId (fk → plans)
+   - key (string) e.g. "max_business_receipts_per_month", "max_team_members", "business_mode_enabled"
+   - valueInt, valueBool, valueText (nullable, use appropriate Drizzle types)
+
+3. `subscriptions`
+   - id (uuid, pk)
+   - planId (fk → plans)
+   - billingPeriod (enum: "monthly" | "annual" | "none") – actual chosen billing frequency for this subscription
+   - accountType (enum: "user" | "organization")
+   - accountId (string fk → users.id or organizations.id, depending on accountType)
+   - stripeCustomerId (string)
+   - stripeSubscriptionId (string, nullable – Free may not have a Stripe subscription)
+   - status (enum: "trialing" | "active" | "past_due" | "canceled" | "incomplete" | "incomplete_expired" | "unpaid")
+   - trialStart, trialEnd (timestamp, nullable)
+   - currentPeriodStart, currentPeriodEnd (timestamp)
+   - cancelAtPeriodEnd (boolean)
+   - canceledAt (timestamp, nullable)
+   - createdAt, updatedAt (timestamps)
+
+4. `subscription_usage`
+   - id (uuid, pk)
+   - subscriptionId (fk → subscriptions)
+   - periodStart, periodEnd (date)
+   - receiptsCount (int)
+   - teamMembersCount (int)
+   - updatedAt (timestamp)
+
+5. `payment_methods`
+   - id (uuid, pk)
+   - subscriptionId (fk)
+   - stripePaymentMethodId (string)
+   - brand (string)
+   - last4 (string)
+   - expMonth, expYear (ints)
+   - billingEmail (string)
+   - createdAt, updatedAt
+
+6. `invoices`
+   - id (uuid, pk)
+   - subscriptionId (fk)
+   - stripeInvoiceId (string, unique)
+   - amountCents (int)
+   - currency (string)
+   - status (enum: "draft" | "open" | "paid" | "uncollectible" | "void")
+   - hostedInvoiceUrl (string)
+   - pdfUrl (string, nullable)
+   - paidAt (timestamp, nullable)
+   - createdAt (timestamp)
+
+7. `crm_accounts`
+   - id (uuid, pk)
+   - accountType ("user" | "organization")
+   - accountId (fk → users.id or organizations.id)
+   - displayName (string)
+   - primaryEmail (string)
+   - primaryPhone (string, nullable)
+   - industry (string, nullable)
+   - sizeSegment (enum: "individual" | "micro" | "sme" | "enterprise")
+   - lifecycleStage (enum: "lead" | "trial" | "customer" | "churn_risk" | "churned")
+   - ownerUserId (nullable fk to an internal/admin user if such a pattern exists, otherwise simple string or null)
+   - notes (short text)
+   - createdAt, updatedAt
+
+8. `crm_interactions`
+   - id (uuid, pk)
+   - crmAccountId (fk → crm_accounts)
+   - type (enum: "email" | "call" | "meeting" | "in_app_message" | "note" | "system_event")
+   - direction (enum: "inbound" | "outbound", nullable)
+   - subject (string)
+   - body (text)
+   - source (string: "manual" | "stripe_webhook" | "system")
+   - relatedSubscriptionId (fk → subscriptions, nullable)
+   - createdByUserId (nullable fk to internal/admin user)
+   - createdAt (timestamp)
+
+9. `crm_tasks`
+   - id (uuid, pk)
+   - crmAccountId (fk → crm_accounts)
+   - title (string)
+   - description (text, nullable)
+   - dueDate (date, nullable)
+   - status (enum: "open" | "in_progress" | "done")
+   - assignedToUserId (nullable fk to internal/admin user)
+   - createdAt, updatedAt
+
+Make sure:
+- You update Drizzle schema and any associated Zod schemas correctly.
+- You keep naming consistent with existing tables and helper types.
+- You add useful indexes (e.g. on accountId, stripeSubscriptionId, stripeCustomerId, etc.) where obviously needed.
+
+---
+
+### Part 2 – Backend services & API routes (Express)
+
+In `server/`:
+
+1. Create a `billing` module (e.g. `server/lib/billing/stripeService.ts` and `server/lib/billing/subscriptionService.ts`) that:
+   - Wraps Stripe SDK calls (assume STRIPE_SECRET_KEY env variable is available or stub it).
+   - Has functions to:
+     - Create or fetch a Stripe Customer for a given SlipSafe account.
+     - Create a Stripe Checkout Session for plan upgrades / downgrades, **taking into account billingPeriod = "monthly" or "annual"** and selecting the correct `stripeMonthlyPriceId` or `stripeAnnualPriceId` from the `plans` table.
+     - Generate a link to the Stripe Customer Portal (for managing payment details and cancelling).
+   - Maps Stripe events to local subscription records in the database.
+
+2. Add an Express route module for billing, for example:
+   - `POST /api/billing/create-checkout-session`
+     - Input: target plan code (e.g. "business_solo" or "business_team"), chosen `billingPeriod` ("monthly" or "annual"), account type ("user" or "organization") and id.
+     - Output: Stripe Checkout Session URL.
+   - `POST /api/billing/portal`
+     - Input: current account.
+     - Output: Stripe Customer Portal URL.
+   - `GET /api/billing/subscription`
+     - Returns the current subscription, plan details (including both monthly and annual prices), plan features, and usage for the logged-in account.
+   - `GET /api/billing/invoices`
+     - Returns a list of invoices for the current account.
+
+3. Add a Stripe webhooks handler (e.g. `server/routes/stripeWebhooks.ts`):
+   - Endpoint: `POST /webhooks/stripe`
+   - Verify signature.
+   - Handle at least:
+     - `checkout.session.completed`
+     - `customer.subscription.created`
+     - `customer.subscription.updated`
+     - `customer.subscription.deleted`
+     - `invoice.payment_succeeded`
+     - `invoice.payment_failed`
+   - For each event, update `subscriptions`, `invoices`, `payment_methods`, `subscription_usage` as appropriate.
+   - Also create relevant `crm_accounts` (if missing) and `crm_interactions` records (e.g., for payment failed, subscription canceled).
+
+4. Implement a helper function like `getEntitlementsForAccount(accountType, accountId)` in a shared backend module:
+   - Loads the active subscription for this account.
+   - Loads the plan + associated features.
+   - Loads or initializes current `subscription_usage` row.
+   - Returns an object `{ plan, featuresByKey, usage, subscriptionStatus }`.
+
+5. Enforce plan limits in existing business logic:
+   - Before allowing business receipts to be created (or business mode to be used), check:
+     - subscriptionStatus is "active" or "trialing";
+     - `usage.receiptsCount` is below relevant plan limit derived from `plan_features` (1,000 for Solo, 5,000 for Team, effectively unlimited for Enterprise).
+   - Before adding new organization members, check against `max_team_members` (1 for Solo, 10 for Team, unlimited for Enterprise).
+   - If limits are exceeded, return appropriate HTTP status (e.g. 402) with a clear JSON error describing what plan and billing option is required.
+
+---
+
+### Part 3 – CRM backend APIs
+
+Create internal CRM routes (under something like `/api/admin/crm`) protected by an “admin” or “internal” check (reuse any existing admin support; if none exists, simulate it via a simple feature flag or TODO).
+
+Minimum endpoints:
+- `GET /api/admin/crm/accounts` – list CRM accounts with filters for plan, lifecycleStage, etc.
+- `GET /api/admin/crm/accounts/:id` – fetch single CRM account with:
+  - Account details
+  - Current subscription (including billingPeriod: monthly vs annual)
+  - Recent invoices
+  - Recent interactions
+  - Open tasks
+- `POST /api/admin/crm/accounts/:id/interactions` – create manual notes or logged calls.
+- `POST /api/admin/crm/accounts/:id/tasks` – create tasks.
+- `PATCH /api/admin/crm/tasks/:taskId` – update task status.
+
+---
+
+### Part 4 – Frontend (React)
+
+In `client/`:
+
+1. Create a **Billing** page for end users in Settings (e.g. `client/src/pages/Settings/Billing.tsx`):
+   - Shows current plan, billing period (monthly vs annual), status, and renewal date.
+   - Shows both monthly and annual prices for the current tier and others (e.g. "R99/month or R80/month billed annually").
+   - Shows a simple usage bar (receipts used / limit).
+   - Buttons:
+     - “Switch to monthly” / “Switch to annual” where applicable (calls backend to create checkout session with the right billingPeriod).
+     - “Upgrade plan” → calls backend to create checkout session and redirects to Stripe.
+     - “Manage billing” → opens Stripe Customer Portal URL.
+   - Shows list of past invoices with status and links (hostedInvoiceUrl).
+
+2. Create a simple **Admin CRM** section (for internal use):
+   - `client/src/pages/Admin/Customers.tsx` – table of CRM accounts (name, plan, billing period, lifecycleStage, status, last activity).
+   - `client/src/pages/Admin/CustomerDetail.tsx` – detail view with:
+     - Account summary + subscription info (including whether they’re on monthly or annual).
+     - Timeline of `crm_interactions`.
+     - List of open/closed `crm_tasks`.
+     - Simple form to add a note or a follow-up task.
+
+Use the existing design system (Shadcn/Tailwind, layout components, etc.) rather than raw HTML, and keep UI minimal but clean.
+
+---
+
+### Part 5 – General constraints & output format
+
+- Follow the existing coding style, TypeScript strictness, and folder structure.
+- Prefer small, composable functions and modules over monolithic code.
+- Do NOT break existing OCR/receipt/claims functionality.
+- When you answer:
+  - Work in **clear, incremental steps**: schema changes first, then backend services, then routes, then frontend pages.
+  - For each step, show:
+    - The **file path**.
+    - Either the full file content (for new files) or a clear patch-style snippet (for modified files).
+  - Mention any new environment variables required (e.g. STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET, STRIPE_PORTAL_RETURN_URL) and where to configure them (.env and server configuration).
+- Assume I will run `npm run db:push` after schema changes, so make sure the schema compiles.
+
+Start by updating `shared/schema.ts` with the new tables (plans, plan_features, subscriptions, subscription_usage, payment_methods, invoices, crm_accounts, crm_interactions, crm_tasks), including support for both **monthly and annual** pricing per plan, then show me those changes before moving on to backend code.

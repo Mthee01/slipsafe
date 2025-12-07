@@ -177,6 +177,31 @@ export function registerBillingRoutes(app: Express) {
   app.get("/api/billing/terms-version", (req: Request, res: Response) => {
     res.json({ currentVersion: CURRENT_TERMS_VERSION });
   });
+
+  app.get("/api/billing/usage", isAuthenticated, async (req: Request, res: Response) => {
+    try {
+      const user = req.user as any;
+      
+      const receiptCount = await storage.getUserReceiptCount(user.id);
+      
+      let teamMemberCount = 1;
+      if (user.activeOrganizationId) {
+        const members = await storage.getOrganizationMembers(user.activeOrganizationId);
+        teamMemberCount = members?.length || 1;
+      }
+
+      res.json({
+        usage: {
+          receiptsUsed: receiptCount,
+          usersCount: teamMemberCount,
+        }
+      });
+    } catch (error: any) {
+      console.error("Failed to get usage:", error);
+      res.status(500).json({ error: "Failed to get usage data" });
+    }
+  });
+
 }
 
 export async function handleSubscriptionWebhook(

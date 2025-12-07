@@ -1,0 +1,361 @@
+How to use this in Replit
+
+In your SlipSafe Replit project, create a folder scripts/ (if it doesn’t exist).
+
+Add the file below as scripts/billingCrmSmokeTest.mjs.
+
+In Replit Secrets / Environment add:
+
+BASE_URL – e.g.
+
+For dev in Replit: https://<your-repl-name>.<your-username>.repl.co
+
+For local dev: http://localhost:3000
+
+USER_AUTH_COOKIE – full cookie string for a normal user (logged into your app).
+
+ADMIN_AUTH_COOKIE – full cookie string for an admin user (if you have a separate admin login).
+
+Example format:
+session=abcd1234...; anotherCookie=xyz
+(just copy it from browser dev tools → Network tab → Request headers → Cookie).
+
+Make sure your server is running.
+
+Run in the Replit shell:
+
+node scripts/billingCrmSmokeTest.mjs
+
+
+The script will print ✅ / ❌ for each check and exit with code 1 if something fails.
+
+2. The smoke test script (drop-in file)
+
+Create scripts/billingCrmSmokeTest.mjs with this content:
+
+// scripts/billingCrmSmokeTest.mjs
+// Simple end-to-end smoke tester for SlipSafe billing + CRM.
+// Run with: node scripts/billingCrmSmokeTest.mjs
+
+const BASE_URL = process.env.BASE_URL || "http://localhost:3000";
+const USER_AUTH_COOKIE = process.env.USER_AUTH_COOKIE || "";
+const ADMIN_AUTH_COOKIE = process.env.ADMIN_AUTH_COOKIE || "";
+
+if (!BASE_URL) {
+  console.error("❌ BASE_URL env var is required.");
+  process.exit(1);
+}
+
+function logSection(title) {
+  console.log("\n==================================================");
+  console.log(title);
+  console.log("==================================================");
+}
+
+function assert(condition, message) {
+  if (!condition) {
+    throw new Error(message);
+  }
+}
+
+async function httpRequest(path, { method = "GET", headers = {}, body, cookie } = {}) {
+  const url = path.startsWith("http") ? path : `${BASE_URL}${path}`;
+
+  const finalHeaders = {
+    "Content-Type": "application/json",
+    ...headers,
+  };
+
+  if (cookie) {
+    finalHeaders["Cookie"] = cookie;
+  }
+
+  const res = await fetch(url, {
+    method,
+    headers: finalHeaders,
+    body: body ? JSON.stringify(body) : undefined,
+  });
+
+  let data = null;
+  const text = await res.text();
+  try {
+    data = text ? JSON.parse(text) : null;
+  } catch {
+    data = text;
+  }
+
+  return { status: res.status, data, headers: Object.fromEntries(res.headers.entries()) };
+}
+
+/**
+ * PUBLIC TESTS (no auth required)
+ * Adjust paths if your endpoints differ.
+ */
+
+async function testHealth() {
+  logSection("TEST: API Health");
+
+  // If you don't have a /api/health endpoint, you can:
+  // - change this to another always-on public endpoint (e.g. /)
+  // - or comment this test out.
+  const { status } = await httpRequest("/api/health").catch(() => ({ status: 0 }));
+  assert(status === 200, `Expected /api/health to return 200, got ${status}`);
+  console.log("✅ /api/health OK");
+}
+
+async function testPlans() {
+  logSection("TEST: Plans API");
+
+  const { status, data } = await httpRequest("/api/plans");
+
+  assert(status === 200, `Expected /api/plans status 200, got ${status}`);
+  assert(Array.isArray(data), "Expected /api/plans to return an array");
+
+  const codes = data.map((p) => p.code);
+  assert(codes.includes("free"), "Expected a 'free' plan");
+  assert(codes.includes("business_solo"), "Expected a 'business_solo' plan");
+  assert(codes.includes("business_team"), "Expected a 'business_team' plan");
+
+  const solo = data.find((p) => p.code === "business_solo");
+  assert(
+    solo.monthlyPriceCents != null && solo.annualPriceCents != null,
+    "Solo plan should have monthly and annual prices"
+  );
+
+  const team = data.find((p) => p.code === "business_team");
+  assert(
+    team.monthlyPriceCents != null && team.annualPriceCents != null,
+    "Team plan should have monthly and annual prices"
+  );
+
+  console.log("✅ /api/plans OK with expected plan codes and price fields");
+}
+
+/**
+ * AUTHENTICATED USER TESTS
+ * These require USER_AUTH_COOKIE to be set.
+ */
+
+async function testSubscriptionForUser() {
+  logSection("TEST: Billing – Current Subscription (user)");
+
+  if (!USER_AUTH_COOKIE) {
+    console.log("⚠️  USER_AUTH_COOKIE not set. Skipping user subscription tests.");
+    return;
+  }
+
+  const { status, data } = await httpRequest("/api/billing/subscription", {
+    cookie: USER_AUTH_COOKIE,
+  });
+
+  assert(
+    status === 200,
+    `Expected /api/billing/subscription (user) to return 200, got ${status}`
+  );
+
+  assert(data && data.plan, "Expected subscription response to have a plan object");
+
+  console.log(
+    `✅ Current user subscription OK – plan: ${data.plan.code} (${data.subscription?.billingPeriod || "n/a"})`
+  );
+}
+
+async function testCreateCheckoutSessionSoloMonthly() {
+  logSection("TEST: Billing – Create Checkout Session (Solo monthly)");
+
+  if (!USER_AUTH_COOKIE) {
+    console.log("⚠️  USER_AUTH_COOKIE not set. Skipping checkout session tests.");
+    return;
+  }
+
+  // Adjust payload shape if your endpoint expects different field names.
+  const body = {
+    planCode: "business_solo",
+    billingPeriod: "monthly",
+  };
+
+  const { status, data } = await httpRequest("/api/billing/create-checkout-session", {
+    method: "POST",
+    cookie: USER_AUTH_COOKIE,
+    body,
+  });
+
+  assert(
+    status === 200,
+    `Expected /api/billing/create-checkout-session to return 200, got ${status}`
+  );
+
+  assert(
+    data && typeof data.checkoutUrl === "string" && data.checkoutUrl.startsWith("https://"),
+    "Expected checkoutUrl string in response"
+  );
+
+  console.log("✅ Checkout session created for Solo monthly (URL looks valid)");
+}
+
+async function testInvoicesForUser() {
+  logSection("TEST: Billing – Invoices list (user)");
+
+  if (!USER_AUTH_COOKIE) {
+    console.log("⚠️  USER_AUTH_COOKIE not set. Skipping invoices tests.");
+    return;
+  }
+
+  const { status, data } = await httpRequest("/api/billing/invoices", {
+    cookie: USER_AUTH_COOKIE,
+  });
+
+  assert(
+    status === 200,
+    `Expected /api/billing/invoices to return 200, got ${status}`
+  );
+
+  assert(Array.isArray(data), "Expected /api/billing/invoices to return an array (even if empty)");
+
+  console.log(`✅ Invoices endpoint OK – found ${data.length} invoices`);
+}
+
+/**
+ * ADMIN CRM TESTS
+ * These require ADMIN_AUTH_COOKIE to be set AND admin permissions.
+ */
+
+async function testAdminCrmAccountsList() {
+  logSection("TEST: CRM – Accounts list (admin)");
+
+  if (!ADMIN_AUTH_COOKIE) {
+    console.log("⚠️  ADMIN_AUTH_COOKIE not set. Skipping CRM admin tests.");
+    return;
+  }
+
+  const { status, data } = await httpRequest("/api/admin/crm/accounts", {
+    cookie: ADMIN_AUTH_COOKIE,
+  });
+
+  if (status === 403 || status === 401) {
+    console.log(
+      `⚠️  /api/admin/crm/accounts returned ${status}. This user may not be an admin. Skipping admin tests.`
+    );
+    return;
+  }
+
+  assert(status === 200, `Expected /api/admin/crm/accounts 200, got ${status}`);
+  assert(Array.isArray(data), "Expected CRM accounts list to be an array");
+
+  if (data.length === 0) {
+    console.log("⚠️  CRM accounts list is empty. App may not have any subscriptions yet.");
+  } else {
+    console.log(`✅ CRM accounts list OK – found ${data.length} accounts`);
+  }
+}
+
+async function testAdminCrmAccountDetail() {
+  logSection("TEST: CRM – Single account detail (admin)");
+
+  if (!ADMIN_AUTH_COOKIE) {
+    console.log("⚠️  ADMIN_AUTH_COOKIE not set. Skipping CRM admin tests.");
+    return;
+  }
+
+  // First fetch list to get an ID
+  const listRes = await httpRequest("/api/admin/crm/accounts", {
+    cookie: ADMIN_AUTH_COOKIE,
+  });
+
+  if (listRes.status !== 200 || !Array.isArray(listRes.data) || listRes.data.length === 0) {
+    console.log("⚠️  Cannot test account detail – no CRM accounts available or list failed.");
+    return;
+  }
+
+  const first = listRes.data[0];
+  const accountId = first.id || first.crmAccountId;
+
+  assert(accountId, "Expected CRM account list items to contain an id");
+
+  const { status, data } = await httpRequest(`/api/admin/crm/accounts/${accountId}`, {
+    cookie: ADMIN_AUTH_COOKIE,
+  });
+
+  assert(
+    status === 200,
+    `Expected /api/admin/crm/accounts/:id to return 200, got ${status}`
+  );
+
+  assert(
+    data && data.subscription && data.interactions && data.tasks !== undefined,
+    "Expected CRM account detail to include subscription, interactions, and tasks"
+  );
+
+  console.log(
+    `✅ CRM account detail OK – plan: ${data.subscription?.plan?.code || "unknown"}, interactions: ${
+      data.interactions.length
+    }, tasks: ${data.tasks.length}`
+  );
+}
+
+/**
+ * RUNNER
+ */
+
+async function runAll() {
+  console.log(`🔍 Running SlipSafe billing + CRM smoke tests against: ${BASE_URL}`);
+
+  const failures = [];
+
+  const tests = [
+    testHealth,
+    testPlans,
+    testSubscriptionForUser,
+    testCreateCheckoutSessionSoloMonthly,
+    testInvoicesForUser,
+    testAdminCrmAccountsList,
+    testAdminCrmAccountDetail,
+  ];
+
+  for (const testFn of tests) {
+    try {
+      await testFn();
+    } catch (err) {
+      console.error(`❌ ${testFn.name} failed:`, err.message || err);
+      failures.push(testFn.name);
+    }
+  }
+
+  console.log("\n==================================================");
+  if (failures.length === 0) {
+    console.log("🎉 All smoke tests passed.");
+    console.log("You can now focus on final UI/content touch-ups and deployment.");
+  } else {
+    console.log(`🚨 ${failures.length} test(s) failed:`, failures.join(", "));
+    process.exit(1);
+  }
+}
+
+runAll().catch((err) => {
+  console.error("Unexpected error in smoke test runner:", err);
+  process.exit(1);
+});
+
+3. What this script actually covers
+
+Once wired to your real endpoints, this script will automatically check:
+
+API is up (/api/health – or whichever path you adjust to).
+
+Plans API returns:
+
+free, business_solo, business_team with monthly/annual prices.
+
+For a logged-in user (via USER_AUTH_COOKIE):
+
+Current subscription endpoint works and returns a plan.
+
+Creating a checkout session for Business Solo / monthly returns a valid Stripe URL.
+
+Invoices endpoint returns an array (even if empty).
+
+For an admin (via ADMIN_AUTH_COOKIE):
+
+CRM accounts list returns data.
+
+CRM account detail includes subscription, interactions, and tasks.

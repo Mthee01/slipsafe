@@ -905,3 +905,297 @@ export const insertEnterpriseInquirySchema = createInsertSchema(enterpriseInquir
 
 export type InsertEnterpriseInquiry = z.infer<typeof insertEnterpriseInquirySchema>;
 export type EnterpriseInquiry = typeof enterpriseInquiries.$inferSelect;
+
+// ============================================
+// BILLING & SUBSCRIPTION SYSTEM
+// ============================================
+
+export const BILLING_PERIODS = ["monthly", "annual", "none"] as const;
+export type BillingPeriod = typeof BILLING_PERIODS[number];
+
+export const SUBSCRIPTION_STATUSES = [
+  "trialing", "active", "past_due", "canceled", 
+  "incomplete", "incomplete_expired", "unpaid"
+] as const;
+export type SubscriptionStatus = typeof SUBSCRIPTION_STATUSES[number];
+
+export const ACCOUNT_ENTITY_TYPES = ["user", "organization"] as const;
+export type AccountEntityType = typeof ACCOUNT_ENTITY_TYPES[number];
+
+export const INVOICE_STATUSES = ["draft", "open", "paid", "uncollectible", "void"] as const;
+export type InvoiceStatus = typeof INVOICE_STATUSES[number];
+
+// Plans table - enhanced plan definitions with Stripe integration
+export const plans = pgTable("plans", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  code: varchar("code", { length: 50 }).notNull().unique(), // "free", "business_solo", "business_team", "enterprise"
+  name: varchar("name", { length: 100 }).notNull(),
+  description: text("description"),
+  defaultBillingPeriod: varchar("default_billing_period", { length: 20 }).notNull().default("monthly"), // "monthly" | "annual" | "none"
+  monthlyPriceCents: integer("monthly_price_cents"), // e.g., 9900 for R99
+  annualPriceCents: integer("annual_price_cents"), // e.g., 96000 for R960/year
+  annualDiscountPercent: integer("annual_discount_percent"), // e.g., 19 for 19%
+  currency: varchar("currency", { length: 10 }).notNull().default("ZAR"),
+  stripeProductId: varchar("stripe_product_id", { length: 100 }),
+  stripeMonthlyPriceId: varchar("stripe_monthly_price_id", { length: 100 }),
+  stripeAnnualPriceId: varchar("stripe_annual_price_id", { length: 100 }),
+  isActive: boolean("is_active").notNull().default(true),
+  isBusinessPlan: boolean("is_business_plan").notNull().default(false),
+  sortOrder: integer("sort_order").notNull().default(0),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertPlanSchema = createInsertSchema(plans).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertPlan = z.infer<typeof insertPlanSchema>;
+export type Plan = typeof plans.$inferSelect;
+
+// Plan features - key-value pairs for feature flags and limits per plan
+export const planFeatures = pgTable("plan_features", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  planId: varchar("plan_id").notNull(),
+  key: varchar("key", { length: 100 }).notNull(), // e.g., "max_business_receipts_per_month", "max_team_members"
+  valueInt: integer("value_int"),
+  valueBool: boolean("value_bool"),
+  valueText: text("value_text"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertPlanFeatureSchema = createInsertSchema(planFeatures).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertPlanFeature = z.infer<typeof insertPlanFeatureSchema>;
+export type PlanFeature = typeof planFeatures.$inferSelect;
+
+// Subscriptions - tracks active subscriptions for users or organizations
+export const subscriptions = pgTable("subscriptions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  planId: varchar("plan_id").notNull(),
+  billingPeriod: varchar("billing_period", { length: 20 }).notNull().default("monthly"), // "monthly" | "annual" | "none"
+  accountType: varchar("account_type", { length: 20 }).notNull(), // "user" | "organization"
+  accountId: varchar("account_id").notNull(), // FK to users.id or organizations.id
+  stripeCustomerId: varchar("stripe_customer_id", { length: 100 }),
+  stripeSubscriptionId: varchar("stripe_subscription_id", { length: 100 }),
+  status: varchar("status", { length: 30 }).notNull().default("active"),
+  trialStart: timestamp("trial_start"),
+  trialEnd: timestamp("trial_end"),
+  currentPeriodStart: timestamp("current_period_start"),
+  currentPeriodEnd: timestamp("current_period_end"),
+  cancelAtPeriodEnd: boolean("cancel_at_period_end").notNull().default(false),
+  canceledAt: timestamp("canceled_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertSubscriptionSchema = createInsertSchema(subscriptions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertSubscription = z.infer<typeof insertSubscriptionSchema>;
+export type Subscription = typeof subscriptions.$inferSelect;
+
+// Subscription usage - tracks usage per billing period
+export const subscriptionUsage = pgTable("subscription_usage", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subscriptionId: varchar("subscription_id").notNull(),
+  periodStart: timestamp("period_start").notNull(),
+  periodEnd: timestamp("period_end").notNull(),
+  receiptsCount: integer("receipts_count").notNull().default(0),
+  teamMembersCount: integer("team_members_count").notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertSubscriptionUsageSchema = createInsertSchema(subscriptionUsage).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type InsertSubscriptionUsage = z.infer<typeof insertSubscriptionUsageSchema>;
+export type SubscriptionUsage = typeof subscriptionUsage.$inferSelect;
+
+// Payment methods - stored payment method info from Stripe
+export const paymentMethods = pgTable("payment_methods", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subscriptionId: varchar("subscription_id").notNull(),
+  stripePaymentMethodId: varchar("stripe_payment_method_id", { length: 100 }).notNull(),
+  brand: varchar("brand", { length: 50 }),
+  last4: varchar("last4", { length: 4 }),
+  expMonth: integer("exp_month"),
+  expYear: integer("exp_year"),
+  billingEmail: varchar("billing_email", { length: 255 }),
+  isDefault: boolean("is_default").notNull().default(false),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertPaymentMethodSchema = createInsertSchema(paymentMethods).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertPaymentMethod = z.infer<typeof insertPaymentMethodSchema>;
+export type PaymentMethod = typeof paymentMethods.$inferSelect;
+
+// Invoices - invoice records from Stripe
+export const invoices = pgTable("invoices", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  subscriptionId: varchar("subscription_id").notNull(),
+  stripeInvoiceId: varchar("stripe_invoice_id", { length: 100 }).notNull().unique(),
+  amountCents: integer("amount_cents").notNull(),
+  currency: varchar("currency", { length: 10 }).notNull().default("ZAR"),
+  status: varchar("status", { length: 20 }).notNull().default("draft"),
+  hostedInvoiceUrl: text("hosted_invoice_url"),
+  pdfUrl: text("pdf_url"),
+  paidAt: timestamp("paid_at"),
+  periodStart: timestamp("period_start"),
+  periodEnd: timestamp("period_end"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertInvoiceSchema = createInsertSchema(invoices).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertInvoice = z.infer<typeof insertInvoiceSchema>;
+export type Invoice = typeof invoices.$inferSelect;
+
+// ============================================
+// CRM (Customer Relationship Management)
+// ============================================
+
+export const SIZE_SEGMENTS = ["individual", "micro", "sme", "enterprise"] as const;
+export type SizeSegment = typeof SIZE_SEGMENTS[number];
+
+export const LIFECYCLE_STAGES = ["lead", "trial", "customer", "churn_risk", "churned"] as const;
+export type LifecycleStage = typeof LIFECYCLE_STAGES[number];
+
+export const CRM_INTERACTION_TYPES = ["email", "call", "meeting", "in_app_message", "note", "system_event"] as const;
+export type CrmInteractionType = typeof CRM_INTERACTION_TYPES[number];
+
+export const CRM_INTERACTION_DIRECTIONS = ["inbound", "outbound"] as const;
+export type CrmInteractionDirection = typeof CRM_INTERACTION_DIRECTIONS[number];
+
+export const CRM_INTERACTION_SOURCES = ["manual", "stripe_webhook", "system"] as const;
+export type CrmInteractionSource = typeof CRM_INTERACTION_SOURCES[number];
+
+export const CRM_TASK_STATUSES = ["open", "in_progress", "done"] as const;
+export type CrmTaskStatus = typeof CRM_TASK_STATUSES[number];
+
+// CRM Accounts - unified view of customers (users or organizations)
+export const crmAccounts = pgTable("crm_accounts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  accountType: varchar("account_type", { length: 20 }).notNull(), // "user" | "organization"
+  accountId: varchar("account_id").notNull(), // FK to users.id or organizations.id
+  displayName: varchar("display_name", { length: 255 }).notNull(),
+  primaryEmail: varchar("primary_email", { length: 255 }).notNull(),
+  primaryPhone: varchar("primary_phone", { length: 50 }),
+  industry: varchar("industry", { length: 100 }),
+  sizeSegment: varchar("size_segment", { length: 20 }).notNull().default("individual"),
+  lifecycleStage: varchar("lifecycle_stage", { length: 20 }).notNull().default("lead"),
+  ownerUserId: varchar("owner_user_id"), // Internal admin user who owns this account
+  notes: text("notes"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertCrmAccountSchema = createInsertSchema(crmAccounts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertCrmAccount = z.infer<typeof insertCrmAccountSchema>;
+export type CrmAccount = typeof crmAccounts.$inferSelect;
+
+// CRM Interactions - timeline of customer interactions
+export const crmInteractions = pgTable("crm_interactions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  crmAccountId: varchar("crm_account_id").notNull(),
+  type: varchar("type", { length: 30 }).notNull(), // "email", "call", "meeting", etc.
+  direction: varchar("direction", { length: 20 }), // "inbound" | "outbound"
+  subject: varchar("subject", { length: 255 }).notNull(),
+  body: text("body"),
+  source: varchar("source", { length: 30 }).notNull().default("manual"), // "manual", "stripe_webhook", "system"
+  relatedSubscriptionId: varchar("related_subscription_id"),
+  createdByUserId: varchar("created_by_user_id"), // Internal admin user
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertCrmInteractionSchema = createInsertSchema(crmInteractions).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertCrmInteraction = z.infer<typeof insertCrmInteractionSchema>;
+export type CrmInteraction = typeof crmInteractions.$inferSelect;
+
+// CRM Tasks - follow-up tasks for customer accounts
+export const crmTasks = pgTable("crm_tasks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  crmAccountId: varchar("crm_account_id").notNull(),
+  title: varchar("title", { length: 255 }).notNull(),
+  description: text("description"),
+  dueDate: timestamp("due_date"),
+  status: varchar("status", { length: 20 }).notNull().default("open"), // "open", "in_progress", "done"
+  assignedToUserId: varchar("assigned_to_user_id"), // Internal admin user
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertCrmTaskSchema = createInsertSchema(crmTasks).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export const updateCrmTaskSchema = z.object({
+  title: z.string().min(1).optional(),
+  description: z.string().optional(),
+  dueDate: z.string().optional(),
+  status: z.enum(CRM_TASK_STATUSES).optional(),
+  assignedToUserId: z.string().optional(),
+});
+
+export type InsertCrmTask = z.infer<typeof insertCrmTaskSchema>;
+export type UpdateCrmTask = z.infer<typeof updateCrmTaskSchema>;
+export type CrmTask = typeof crmTasks.$inferSelect;
+
+// Billing API schemas
+export const createBillingCheckoutSchema = z.object({
+  planCode: z.string().min(1, "Plan code is required"),
+  billingPeriod: z.enum(["monthly", "annual"]),
+  accountType: z.enum(["user", "organization"]).optional(),
+  accountId: z.string().optional(),
+});
+
+export type CreateBillingCheckout = z.infer<typeof createBillingCheckoutSchema>;
+
+// CRM API schemas
+export const createCrmInteractionSchema = z.object({
+  type: z.enum(CRM_INTERACTION_TYPES),
+  direction: z.enum(CRM_INTERACTION_DIRECTIONS).optional(),
+  subject: z.string().min(1, "Subject is required"),
+  body: z.string().optional(),
+});
+
+export type CreateCrmInteraction = z.infer<typeof createCrmInteractionSchema>;
+
+export const createCrmTaskSchema = z.object({
+  title: z.string().min(1, "Title is required"),
+  description: z.string().optional(),
+  dueDate: z.string().optional(),
+  assignedToUserId: z.string().optional(),
+});
+
+export type CreateCrmTaskInput = z.infer<typeof createCrmTaskSchema>;

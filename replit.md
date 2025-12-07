@@ -77,6 +77,18 @@ Preferred communication style: Simple, everyday language.
     - Only admins/owners can invite members or cancel invitations
     - All organization data access requires active membership verification
   - **Multi-tenant Receipts**: Organization receipts are tracked via `organizationId` field on purchases, enabling aggregation for business reports across all team members.
+- **Billing System**: Dual-router architecture for subscription management:
+  - **Legacy Router** (`server/billing.ts`): Handles user-facing checkout flow using env-based Stripe Price IDs. Provides `/api/billing/create-checkout-session`, `/api/billing/portal-session`, `/api/billing/subscription`, `/api/billing/usage`, and `/api/billing/terms-version` endpoints.
+  - **Enhanced Router** (`server/billing-routes.ts`): Advanced subscription management with plan-aware checkout, entitlements, and CRM integration. Provides `/api/billing/plans`, `/api/billing/subscription` (enhanced), `/api/billing/invoices`, `/api/billing/create-checkout-session`, `/api/billing/portal`, `/api/billing/cancel`, `/api/billing/resume`, and `/api/billing/entitlements` endpoints.
+  - **Billing Services**: `server/lib/billing/stripeService.ts` (Stripe SDK wrappers) and `subscriptionService.ts` (subscription management and entitlements).
+  - **User Billing Page** (`/billing`): Displays current plan, usage stats, and invoice history with proper ZAR currency formatting.
+  - **Pricing**: ZAR-based with Solo (R99/mo or R80/mo annual), Pro (R269/mo or R229/mo annual), and Enterprise (custom).
+- **CRM System** (`/admin/crm`): Customer relationship management for admins:
+  - **CRM Routes** (`server/crm-routes.ts`): Protected with `isAuthenticated` and `isAdmin` middleware.
+  - **CRM Accounts**: Tracks users and organizations with lifecycle stages (lead, trial, customer, churned, churn_risk, enterprise).
+  - **Interactions**: Log customer communications (email, call, meeting, note, chat) with direction tracking.
+  - **Tasks**: Create and manage follow-up tasks with due dates and completion status.
+  - **Stats Dashboard**: Displays customer counts, leads, churn risk, open tasks, and active subscriptions.
 - **Reports**: Two-tier reporting system:
   - **Personal Users**: Dashboard showing total receipts, total spent, pending returns, active warranties, upcoming deadlines, spending by category, and monthly spending trends.
   - **Business Users**: Comprehensive tax/VAT summaries, expense categorization, monthly trends with visual charts, CSV export, and PDF report generation.

@@ -1,4 +1,4 @@
-import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe, Users, Activity, BookOpen } from "lucide-react";
+import { Home, FileText, QrCode, Settings, User, Building2, UserCircle, RefreshCw, Shield, BarChart3, Store, Sparkles, Globe, Users, Activity, BookOpen, CreditCard } from "lucide-react";
 import {
   Sidebar,
   SidebarContent,
@@ -54,6 +54,13 @@ const menuItems = [
     url: "/settings",
     icon: Settings,
     testId: "nav-settings",
+    businessOnly: false,
+  },
+  {
+    title: "Billing",
+    url: "/billing",
+    icon: CreditCard,
+    testId: "nav-billing",
     businessOnly: false,
   },
   {

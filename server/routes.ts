@@ -20,6 +20,8 @@ import { enterpriseInquiries } from "@shared/schema";
 import { db } from "./db";
 import { registerBillingRoutes } from "./billing";
 import { registerOrganizationRoutes } from "./organization-routes";
+import billingRoutes from "./billing-routes";
+import crmRoutes from "./crm-routes";
 import { canAddReceipt } from "./lib/planLimits";
 
 // Helper to convert plan selection + interval to Stripe plan ID
@@ -4184,6 +4186,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   registerBillingRoutes(app);
   registerOrganizationRoutes(app);
+  
+  // Enhanced billing routes with new subscription system
+  app.use('/api/billing', billingRoutes);
+  
+  // CRM routes for admin customer management
+  app.use('/api/crm', crmRoutes);
 
   const httpServer = createServer(app);
   return httpServer;

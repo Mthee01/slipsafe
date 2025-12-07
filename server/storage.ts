@@ -1167,6 +1167,12 @@ export class DatabaseStorage implements IStorage {
       .where(and(...conditions))
       .orderBy(desc(purchases.createdAt));
   }
+
+  // Billing helpers
+  async getUserReceiptCount(userId: string): Promise<number> {
+    const [result] = await db.select({ count: count() }).from(purchases).where(eq(purchases.userId, userId));
+    return result?.count || 0;
+  }
 }
 
 export const storage = new DatabaseStorage();

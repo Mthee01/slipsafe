@@ -43,6 +43,8 @@ import LandingPage from "@/pages/landing";
 import Terms from "@/pages/terms";
 import Privacy from "@/pages/privacy";
 import Team from "@/pages/team";
+import Billing from "@/pages/billing";
+import AdminCrm from "@/pages/admin-crm";
 import logo from "@assets/SlipSafe Logo_1762888976121.png";
 
 function AppHeader() {
@@ -169,6 +171,7 @@ function AppContent() {
                   <Route path="/claims" component={Claims} />
                   <Route path="/reports" component={Reports} />
                   <Route path="/settings" component={Settings} />
+                  <Route path="/billing" component={Billing} />
                   <Route path="/profile" component={Profile} />
                   <Route path="/team" component={Team} />
                   <Route path="/upgrade-to-business" component={UpgradeToBusiness} />
@@ -177,6 +180,7 @@ function AppContent() {
                   <Route path="/admin/organizations" component={AdminDashboard} />
                   <Route path="/admin/merchant-rules" component={AdminDashboard} />
                   <Route path="/admin/activity" component={AdminDashboard} />
+                  <Route path="/admin/crm" component={AdminCrm} />
                   <Route path="/merchant" component={MerchantPortal} />
                   <Route path="/merchant-portal" component={IntegratedMerchantPortal} />
                   <Route path="/verify/:claimCode" component={MerchantPortal} />
